@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wslc-compose"
+version = "0.1.0"
+description = "docker-compose style orchestration for WSL containers (wslc)"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+authors = [{ name = "Bacar Ndiaye" }]
+keywords = ["wsl", "wslc", "compose", "containers", "windows"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Systems Administration",
+]
+dependencies = ["PyYAML>=5.4"]
+
+[project.urls]
+Homepage = "https://github.com/bacarndiaye/wslc-compose"
+Issues = "https://github.com/bacarndiaye/wslc-compose/issues"
+
+[project.scripts]
+wslc-compose = "wslc_compose.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wslc_compose"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

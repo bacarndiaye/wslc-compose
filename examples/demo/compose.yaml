@@ -1,0 +1,52 @@
+# Full-featured demo: shared network, named volume, bind mount, env vars,
+# depends_on ordering, published ports and container DNS.
+#
+#   cd examples/demo
+#   wslc-compose up -d
+#   curl http://localhost:8088          # nginx serving the bind-mounted page
+#   wslc-compose exec app cat /data/log.txt
+#   wslc-compose logs -f app
+#   wslc-compose down -v
+
+name: wslc-demo
+
+services:
+  web:
+    image: nginx:alpine
+    ports:
+      - "8088:80"
+    volumes:
+      - ./html:/usr/share/nginx/html:ro
+    networks:
+      - front
+    depends_on:
+      - app
+
+  app:
+    image: alpine:latest
+    command: >
+      sh -c 'while true; do
+               echo "$(date) ${APP_MESSAGE:-hello from wslc-compose} (redis: $$(nc -z cache 6379 && echo up || echo down))" >> /data/log.txt;
+               sleep 5;
+             done'
+    environment:
+      APP_MESSAGE: ${APP_MESSAGE:-hello from wslc-compose}
+    volumes:
+      - data:/data
+    networks:
+      - front
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:alpine
+    networks:
+      front:
+        aliases:
+          - cache
+
+networks:
+  front:
+
+volumes:
+  data:
