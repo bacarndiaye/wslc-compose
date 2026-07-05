@@ -24,6 +24,7 @@ naming, config-drift detection and scaling included.
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Quick start](#quick-start)
+- [Migrating an existing wslc setup](#migrating-an-existing-wslc-setup)
 - [Command reference](#command-reference)
 - [Compose file support](#compose-file-support)
 - [Variable interpolation](#variable-interpolation)
@@ -136,6 +137,15 @@ $ wslc images                # ← not a compose command: forwarded to wslc.exe 
 
 `wslc-compose up -d`, `wslc-compose ps`, ... work identically if you prefer the
 standalone command.
+
+## Migrating an existing wslc setup
+
+Already running containers with raw `wslc run` commands or a home-grown script?
+**[docs/MIGRATION.md](docs/MIGRATION.md)** walks through the whole move, end to end:
+inventorying what runs, reusing already-built images (retag instead of rebuild),
+retiring the old containers without breaking published ports, verifying, and rolling
+back — plus a recovery cheat sheet for the preview's sharp edges (per-elevation
+sessions, mount budget, wedged sessions).
 
 ## Command reference
 
@@ -359,6 +369,19 @@ services on the next `up`.
   This also affects `wslc build` (the build context is mounted). Microsoft says it
   will be fixed; meanwhile `wsl --shutdown` resets the session (⚠️ stops **all** WSL
   containers and distros).
+- **Sessions are per Windows user *and per elevation***: an elevated terminal and a
+  normal one talk to two different wslc sessions with separate containers, images,
+  networks and volumes — invisible to each other, but competing for the same
+  `127.0.0.1` published ports. Pick one elevation and stick to it (details and
+  recovery steps in [docs/MIGRATION.md](docs/MIGRATION.md)).
+- **Sessions live in the Windows service and survive `wsl --shutdown`.** A wedged
+  session (every wslc command hangs) can only be cleared by restarting the service
+  from an admin PowerShell: `Restart-Service WslService -Force`.
+- **Avoid `wslc system session terminate` while containers run** — in the current
+  preview it can deadlock the whole wslc service (see above for the recovery).
+- **Published ports bind the Windows loopback**, not the distro's: test them from
+  the Windows side (browser, `powershell.exe Invoke-WebRequest`), not with a `curl
+  localhost` inside WSL.
 - `privileged`, `cap_add`, `devices`, `sysctls`, `secrets`, `configs`, `extra_hosts`,
   `logging` — not configurable with wslc; ignored with a warning.
 
@@ -383,7 +406,27 @@ show as `E:\...` style Windows paths. Paths inside the distro filesystem
 
 **`port is already allocated` style errors** — another container (maybe from a raw
 `wslc run`) publishes the same host port; `wslc list -a` shows everything, not just
-this project.
+this project. If `wslc list -a` shows *nothing* on that port, the culprit likely
+lives in the other elevation's session (see below).
+
+**Containers/images/networks suddenly "gone"** — you probably switched between an
+elevated and a normal terminal: each elevation has its own wslc session with its own
+objects. `wslc system session list` shows them; go back to the terminal elevation
+that created your containers.
+
+**Every wslc command hangs, even `wslc list`** — the session's Windows-side relay is
+deadlocked (known preview issue, e.g. after a `system session terminate` with running
+containers). `wsl --shutdown` does **not** fix this — sessions survive it. From an
+**admin** PowerShell: `Restart-Service WslService -Force` (older builds:
+`Restart-Service LxssManager -Force`); this restarts all of WSL.
+
+**A published port works in the browser but not with `curl localhost` inside WSL** —
+expected: wslc publishes on the *Windows* loopback, which the distro's loopback
+doesn't see. Test from the Windows side.
+
+**`wslc-compose: command not found` inside a script run from PowerShell** —
+`bash script.sh` from PowerShell starts a non-login shell without `~/.local/bin` on
+PATH. Add `export PATH="$HOME/.local/bin:$PATH"` at the top of the script.
 
 **What is it actually running?** — add `--dry-run` to any command to see every
 `wslc` invocation verbatim.
