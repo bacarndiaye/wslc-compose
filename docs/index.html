@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wslc-compose — docker-compose for WSL containers</title>
+<meta name="description" content="docker-compose style orchestration for Microsoft's WSL container (wslc) preview. Use the compose.yaml you already have — networks, volumes, builds, depends_on, scaling.">
+<meta property="og:title" content="wslc-compose">
+<meta property="og:description" content="docker-compose style orchestration for WSL containers (wslc). Point it at your existing compose.yaml.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%A6%3C/text%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg-soft: #161b22;
+    --bg-card: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-dim: #8b949e;
+    --accent: #58a6ff;
+    --accent-2: #3fb950;
+    --code-bg: #0a0d12;
+    --warn: #d29922;
+    --max: 960px;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #ffffff;
+      --bg-soft: #f6f8fa;
+      --bg-card: #f6f8fa;
+      --border: #d0d7de;
+      --text: #1f2328;
+      --text-dim: #57606a;
+      --accent: #0969da;
+      --accent-2: #1a7f37;
+      --code-bg: #0d1117;
+      --warn: #9a6700;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  code, pre, .mono {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: var(--max); margin: 0 auto; padding: 0 24px; }
+
+  /* ---------- header ---------- */
+  header {
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+    position: sticky; top: 0; z-index: 10;
+    backdrop-filter: blur(8px);
+  }
+  header .wrap {
+    display: flex; align-items: center; gap: 16px;
+    height: 56px;
+  }
+  header .brand { font-weight: 700; color: var(--text); font-size: 17px; }
+  header .brand:hover { text-decoration: none; }
+  header nav { margin-left: auto; display: flex; gap: 20px; font-size: 14px; }
+  header nav a { color: var(--text-dim); }
+  header nav a:hover { color: var(--text); text-decoration: none; }
+  @media (max-width: 640px) { header nav .opt { display: none; } }
+
+  /* ---------- hero ---------- */
+  .hero { padding: 72px 0 56px; text-align: center; }
+  .hero .badge-row {
+    display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;
+    margin-bottom: 24px;
+  }
+  .pill {
+    font-size: 12.5px; padding: 3px 12px; border-radius: 999px;
+    border: 1px solid var(--border); color: var(--text-dim);
+    background: var(--bg-soft);
+  }
+  .pill.green { color: var(--accent-2); border-color: color-mix(in srgb, var(--accent-2) 40%, transparent); }
+  .hero h1 {
+    font-size: clamp(34px, 6vw, 52px);
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+    margin-bottom: 18px;
+  }
+  .hero h1 .grad {
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .hero p.tag {
+    font-size: 19px; color: var(--text-dim);
+    max-width: 640px; margin: 0 auto 34px;
+  }
+  .hero p.tag strong { color: var(--text); font-weight: 600; }
+
+  .install {
+    max-width: 720px; margin: 0 auto 22px;
+    background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 18px;
+    display: flex; align-items: center; gap: 14px;
+    text-align: left; overflow-x: auto;
+  }
+  .install code { color: #e6edf3; font-size: 14px; white-space: nowrap; }
+  .install code .p { color: #3fb950; user-select: none; }
+  .install button {
+    margin-left: auto; flex-shrink: 0;
+    background: var(--bg-soft); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 12px; font-size: 13px; cursor: pointer;
+  }
+  .install button:hover { border-color: var(--accent); }
+  .cta-row { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .btn {
+    display: inline-block; padding: 10px 22px; border-radius: 8px;
+    font-weight: 600; font-size: 15px; border: 1px solid var(--border);
+  }
+  .btn:hover { text-decoration: none; }
+  .btn.primary { background: var(--accent); color: #fff; border-color: transparent; }
+  .btn.primary:hover { filter: brightness(1.1); }
+  .btn.ghost { color: var(--text); background: var(--bg-soft); }
+  .btn.ghost:hover { border-color: var(--accent); }
+
+  /* ---------- sections ---------- */
+  section { padding: 56px 0; border-top: 1px solid var(--border); }
+  section h2 {
+    font-size: 26px; letter-spacing: -0.01em; margin-bottom: 8px;
+  }
+  section .sub { color: var(--text-dim); margin-bottom: 32px; max-width: 700px; }
+
+  /* ---------- terminal ---------- */
+  .term {
+    background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: 10px; overflow: hidden;
+    box-shadow: 0 12px 40px rgba(0,0,0,.35);
+  }
+  .term .bar {
+    display: flex; align-items: center; gap: 6px;
+    padding: 10px 14px; background: rgba(255,255,255,.04);
+    border-bottom: 1px solid var(--border);
+  }
+  .term .dot { width: 11px; height: 11px; border-radius: 50%; }
+  .term .dot.r { background: #ff5f57; } .term .dot.y { background: #febc2e; } .term .dot.g { background: #28c840; }
+  .term .bar span { margin-left: 8px; font-size: 12px; color: #8b949e; }
+  .term pre {
+    padding: 18px 20px; overflow-x: auto;
+    font-size: 13.5px; line-height: 1.7; color: #e6edf3;
+  }
+  .term .p  { color: #3fb950; }
+  .term .c  { color: #8b949e; }
+  .term .o  { color: #8b949e; }
+  .term .hl { color: #79c0ff; }
+
+  /* ---------- feature grid ---------- */
+  .grid {
+    display: grid; gap: 16px;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  }
+  .card {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 20px 22px;
+  }
+  .card .ico { font-size: 22px; margin-bottom: 10px; }
+  .card h3 { font-size: 16px; margin-bottom: 6px; }
+  .card p { font-size: 14px; color: var(--text-dim); }
+  .card code {
+    font-size: 12.5px; background: var(--bg-soft);
+    border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px;
+    color: var(--text);
+  }
+
+  /* ---------- how ---------- */
+  .steps { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+  .step {
+    border: 1px solid var(--border); border-radius: 10px; padding: 22px;
+    background: var(--bg-card); position: relative;
+  }
+  .step .n {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--accent); color: #fff; font-weight: 700; font-size: 14px;
+    margin-bottom: 12px;
+  }
+  .step h3 { font-size: 16px; margin-bottom: 6px; }
+  .step p { font-size: 14px; color: var(--text-dim); }
+
+  /* ---------- callouts ---------- */
+  .callout {
+    border: 1px solid var(--border); border-left: 4px solid var(--warn);
+    border-radius: 8px; padding: 18px 22px; background: var(--bg-card);
+    margin-top: 24px; font-size: 15px;
+  }
+  .callout.blue { border-left-color: var(--accent); }
+  .callout strong { color: var(--text); }
+  .callout p { color: var(--text-dim); }
+
+  /* ---------- compat table ---------- */
+  .tbl-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 560px; }
+  th, td { text-align: left; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+  th { background: var(--bg-soft); font-size: 13px; color: var(--text-dim); font-weight: 600; }
+  tr:last-child td { border-bottom: none; }
+  td code { font-size: 12.5px; background: var(--bg-soft); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
+  .ok { color: var(--accent-2); }
+
+  /* ---------- footer ---------- */
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 36px 0 48px; color: var(--text-dim); font-size: 14px;
+    text-align: center;
+  }
+  footer .links { display: flex; gap: 20px; justify-content: center; margin-bottom: 14px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a class="brand" href="#">📦 wslc-compose</a>
+    <nav>
+      <a href="#how" class="opt">How it works</a>
+      <a href="#features" class="opt">Features</a>
+      <a href="#compat" class="opt">Compatibility</a>
+      <a href="https://github.com/bacarndiaye/wslc-compose/blob/main/docs/MIGRATION.md">Migration</a>
+      <a href="https://github.com/bacarndiaye/wslc-compose">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<div class="hero wrap">
+  <div class="badge-row">
+    <span class="pill">Python ≥ 3.9 · MIT</span>
+    <span class="pill green">Works with the WSL container preview today</span>
+  </div>
+  <h1><span class="grad">docker-compose</span> for<br>WSL containers</h1>
+  <p class="tag">
+    Microsoft's new <strong>wslc</strong> CLI runs containers natively on Windows —
+    but has no Compose support yet. <strong>wslc-compose</strong> drives it from the
+    <strong>compose.yaml you already use</strong> with Docker or Podman. No daemon, no lock-in.
+  </p>
+  <div class="install">
+    <code><span class="p">$</span> curl -fsSL https://raw.githubusercontent.com/bacarndiaye/wslc-compose/main/install.sh | sh</code>
+    <button onclick="navigator.clipboard.writeText('curl -fsSL https://raw.githubusercontent.com/bacarndiaye/wslc-compose/main/install.sh | sh').then(()=>{this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500)})">Copy</button>
+  </div>
+  <div class="cta-row">
+    <a class="btn primary" href="https://github.com/bacarndiaye/wslc-compose#quick-start">Get started</a>
+    <a class="btn ghost" href="https://github.com/bacarndiaye/wslc-compose/blob/main/docs/MIGRATION.md">Migrate an existing wslc setup</a>
+  </div>
+</div>
+
+<section id="demo">
+  <div class="wrap">
+    <div class="term">
+      <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span>Terminal — WSL</span></div>
+      <pre><span class="p">$</span> cd my-project              <span class="c"># contains the same compose.yaml as your Docker setup</span>
+<span class="p">$</span> wslc compose up -d
+<span class="o">Network my-project_default created
+Volume my-project_data created
+Creating my-project-db-1 ...
+Creating my-project-web-1 ...</span>
+
+<span class="p">$</span> wslc compose ps
+<span class="o">NAME               SERVICE  IMAGE         STATUS   PORTS
+my-project-db-1    db       postgres:16   running
+my-project-web-1   web      nginx:alpine  running  <span class="hl">0.0.0.0:8080->80/tcp</span></span>
+
+<span class="p">$</span> wslc compose logs -f web
+<span class="p">$</span> wslc compose exec web sh
+<span class="p">$</span> wslc compose down -v
+
+<span class="p">$</span> wslc images                 <span class="c"># not a compose command → forwarded verbatim to wslc.exe</span></pre>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap">
+    <h2>No daemon. No state file. No magic.</h2>
+    <p class="sub">A thin Python CLI (one dependency: PyYAML) that turns your compose file into plain <code>wslc</code> commands.</p>
+    <div class="steps">
+      <div class="step">
+        <span class="n">1</span>
+        <h3>Load</h3>
+        <p>Finds your <code>compose.yaml</code> / <code>docker-compose.yml</code>, applies <code>.env</code> and <code>${VAR:-default}</code> interpolation exactly like docker compose, and normalizes it.</p>
+      </div>
+      <div class="step">
+        <span class="n">2</span>
+        <h3>Plan</h3>
+        <p>Which networks and volumes must exist, which images to build or pull, the <code>depends_on</code> start order, and which containers are stale (config-hash comparison).</p>
+      </div>
+      <div class="step">
+        <span class="n">3</span>
+        <h3>Execute</h3>
+        <p>Plain <code>wslc run / build / network create / ...</code> invocations. Add <code>--dry-run</code> to any command to see them verbatim — and paste them yourself if you prefer.</p>
+      </div>
+    </div>
+    <div class="callout blue">
+      <p><strong>State lives entirely in wslc</strong> (container labels), so wslc-compose and the raw
+      wslc CLI mix freely. When WSL ships native Compose support
+      (<a href="https://github.com/microsoft/WSL/issues/40948">microsoft/WSL#40948</a>), migrating away
+      is trivial — your compose files never stopped being standard compose files.</p>
+    </div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <h2>Everything you expect from compose</h2>
+    <p class="sub">Mapped onto the wslc preview — including the parts that are easy to get wrong by hand.</p>
+    <div class="grid">
+      <div class="card"><div class="ico">🌐</div><h3>Networks with DNS</h3>
+        <p>Per-project networks; services resolve each other by name and alias, so <code>db:5432</code> URLs work unchanged.</p></div>
+      <div class="card"><div class="ico">💾</div><h3>Volumes &amp; bind mounts</h3>
+        <p>Named volumes created on demand; Linux bind-mount paths translated to the Windows paths wslc requires (<code>wslpath -w</code>) automatically.</p></div>
+      <div class="card"><div class="ico">🧱</div><h3>Builds</h3>
+        <p><code>build:</code> with context, dockerfile, args, target — images tagged <code>&lt;project&gt;-&lt;service&gt;</code>, rebuilt only when missing or on <code>--build</code>.</p></div>
+      <div class="card"><div class="ico">🔀</div><h3>Dependency ordering</h3>
+        <p><code>depends_on</code> topological sort for start and creation order, circular dependencies rejected up front.</p></div>
+      <div class="card"><div class="ico">♻️</div><h3>Config-drift detection</h3>
+        <p><code>up</code> is idempotent: it recreates only the services whose resolved configuration actually changed, and leaves the rest running.</p></div>
+      <div class="card"><div class="ico">📈</div><h3>Scaling &amp; profiles</h3>
+        <p><code>deploy.replicas</code>, <code>--scale svc=N</code>, compose <code>profiles</code>, project scoping — several projects coexist cleanly.</p></div>
+      <div class="card"><div class="ico">🖥️</div><h3>Familiar UX</h3>
+        <p><code>up · down · ps · logs -f · exec · build · pull · config</code> — plus a <code>wslc</code> wrapper so it feels exactly like <code>docker compose</code>.</p></div>
+      <div class="card"><div class="ico">🔍</div><h3>Transparent</h3>
+        <p><code>--dry-run</code> on any command prints every wslc invocation. Unsupported keys warn instead of failing, so existing files keep working.</p></div>
+      <div class="card"><div class="ico">🚑</div><h3>Preview-proof docs</h3>
+        <p>The sharp edges of the wslc preview — per-elevation sessions, mount limits, wedged sessions — documented with tested recovery steps.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="compat">
+  <div class="wrap">
+    <h2>Compose file compatibility</h2>
+    <p class="sub">A sample of the mapping — the <a href="https://github.com/bacarndiaye/wslc-compose#compose-file-support">full table is in the README</a>. Keys wslc can't honor yet are accepted with a warning, never a failure.</p>
+    <div class="tbl-scroll">
+      <table>
+        <tr><th>Compose key</th><th>Handled as</th></tr>
+        <tr><td><code>image</code>, <code>build</code></td><td class="ok">✓ &nbsp;<code>wslc run</code> / <code>wslc build -t project-service</code></td></tr>
+        <tr><td><code>ports</code> (short/long, ranges, udp)</td><td class="ok">✓ &nbsp;<code>-p</code></td></tr>
+        <tr><td><code>volumes</code> (named, bind, tmpfs, <code>:ro</code>)</td><td class="ok">✓ &nbsp;<code>-v</code> with Windows-path translation</td></tr>
+        <tr><td><code>networks</code>, <code>aliases</code>, <code>external</code></td><td class="ok">✓ &nbsp;<code>wslc network create</code>, <code>--network-alias</code></td></tr>
+        <tr><td><code>environment</code>, <code>env_file</code>, <code>${VAR}</code></td><td class="ok">✓ &nbsp;full docker-compose interpolation rules</td></tr>
+        <tr><td><code>depends_on</code>, <code>deploy.replicas</code>, <code>profiles</code></td><td class="ok">✓ &nbsp;ordering, scaling, opt-in services</td></tr>
+        <tr><td><code>restart</code>, <code>healthcheck</code>, <code>privileged</code>, …</td><td>⚠ &nbsp;no wslc equivalent yet — warned, not fatal</td></tr>
+      </table>
+    </div>
+    <div class="callout">
+      <p><strong>Already running containers with raw <code>wslc run</code>?</strong>
+      The <a href="https://github.com/bacarndiaye/wslc-compose/blob/main/docs/MIGRATION.md">migration guide</a>
+      covers the move end to end: image retagging instead of rebuilds, port handover, verification from the
+      Windows loopback, rollback — plus a recovery cheat sheet for the preview's sharp edges.</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="links">
+      <a href="https://github.com/bacarndiaye/wslc-compose">GitHub</a>
+      <a href="https://github.com/bacarndiaye/wslc-compose#command-reference">Docs</a>
+      <a href="https://github.com/bacarndiaye/wslc-compose/blob/main/docs/MIGRATION.md">Migration guide</a>
+      <a href="https://github.com/bacarndiaye/wslc-compose/issues">Issues</a>
+    </div>
+    <div>MIT © Bacar Ndiaye — not affiliated with Microsoft. <em>wslc</em> is part of the
+    <a href="https://learn.microsoft.com/windows/wsl/wsl-container">WSL container preview</a>.</div>
+  </div>
+</footer>
+
+</body>
+</html>
