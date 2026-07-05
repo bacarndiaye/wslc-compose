@@ -376,7 +376,9 @@ services on the next `up`.
   recovery steps in [docs/MIGRATION.md](docs/MIGRATION.md)).
 - **Sessions live in the Windows service and survive `wsl --shutdown`.** A wedged
   session (every wslc command hangs) can only be cleared by restarting the service
-  from an admin PowerShell: `Restart-Service WslService -Force`.
+  from an admin PowerShell: `Restart-Service WslService -Force`. If that restart
+  itself hangs (service stuck in `StopPending`), see the force-kill recovery in
+  [Troubleshooting](#troubleshooting).
 - **Avoid `wslc system session terminate` while containers run** — in the current
   preview it can deadlock the whole wslc service (see above for the recovery).
 - **Published ports bind the Windows loopback**, not the distro's: test them from
@@ -419,6 +421,35 @@ deadlocked (known preview issue, e.g. after a `system session terminate` with ru
 containers). `wsl --shutdown` does **not** fix this — sessions survive it. From an
 **admin** PowerShell: `Restart-Service WslService -Force` (older builds:
 `Restart-Service LxssManager -Force`); this restarts all of WSL.
+
+**`Restart-Service WslService -Force` hangs / the service is stuck in `StopPending`** —
+the `-Force` restart asks the service to stop, but a wedged utility VM (a `vmmem`
+process that refuses to die) keeps it from stopping, so it sits in `StopPending`
+forever and every `wsl.exe` call stays suspended. Don't wait on it — kill the old
+service process directly; because `WslService` is set to *Automatic*, Windows
+restarts it cleanly with a fresh PID. From an **admin** PowerShell:
+
+```powershell
+# 1) confirm the state and grab the stuck PID
+Get-Service WslService | Select-Object Status          # -> StopPending
+$svcpid = (Get-CimInstance Win32_Service -Filter "Name='WslService'").ProcessId
+
+# 2) force-kill the wedged service process; it auto-restarts (Automatic start)
+taskkill /F /PID $svcpid
+
+# 3) verify it came back, then start clean
+Get-Service WslService | Select-Object Status          # -> Running (new PID)
+wsl.exe --shutdown                                     # clear leftover sessions
+```
+
+A leftover `vmmemwslc-*` process may survive even `wsl --shutdown` (it is a protected
+Hyper-V worker, not killable with `taskkill`, even as admin). It is inert and no
+longer blocks the service — only a full Windows reboot clears it. Prefer killing the
+stuck service PID (above) over rebooting.
+
+> Tip: run WSL commands over SSH from another machine, or from a Windows terminal
+> that is **not** itself inside WSL — a `wsl --shutdown` (or the kill above) then
+> can't cut your own session out from under you.
 
 **A published port works in the browser but not with `curl localhost` inside WSL** —
 expected: wslc publishes on the *Windows* loopback, which the distro's loopback
