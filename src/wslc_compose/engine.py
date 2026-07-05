@@ -165,6 +165,18 @@ def _names_from_table(args: List[str], column: str = "NAME") -> List[str]:
     return names
 
 
+def image_exists(name: str) -> bool:
+    repo, _, tag = name.partition(":")
+    try:
+        images = capture_json(["images", "--format", "json"])
+    except WslcError:
+        return False
+    for img in images if isinstance(images, list) else []:
+        if img.get("Repository") == repo and (not tag or img.get("Tag") == tag):
+            return True
+    return False
+
+
 def network_names() -> List[str]:
     return _names_from_table(["network", "list"])
 

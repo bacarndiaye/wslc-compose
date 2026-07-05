@@ -168,7 +168,8 @@ def cmd_up(ns: argparse.Namespace) -> int:
             _info(f"Volume {vol.name} created")
 
     for svc in services:
-        if svc.build and (ns.build or not svc.image):
+        # build when explicitly asked, or when the target image is absent
+        if svc.build and (ns.build or not engine.image_exists(flags.image_name(project, svc))):
             _info(f"Building {svc.name} ...")
             engine.run(
                 flags.build_args(project, svc, path_mapper=engine.to_host_path),
