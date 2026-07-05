@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "wslc-compose"
-version = "0.1.0"
+version = "0.2.0"
 description = "docker-compose style orchestration for WSL containers (wslc)"
 readme = "README.md"
 license = "MIT"
@@ -27,6 +27,7 @@ Issues = "https://github.com/bacarndiaye/wslc-compose/issues"
 
 [project.scripts]
 wslc-compose = "wslc_compose.cli:main"
+wslc = "wslc_compose.shim:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/wslc_compose"]

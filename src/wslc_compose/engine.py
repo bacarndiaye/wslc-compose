@@ -25,14 +25,22 @@ class WslcError(RuntimeError):
     pass
 
 
+def _is_self(path: str) -> bool:
+    """True when `path` is our own `wslc` wrapper script, not the real CLI."""
+    try:
+        return os.path.realpath(path) == os.path.realpath(sys.argv[0])
+    except OSError:
+        return False
+
+
 @lru_cache(maxsize=1)
 def find_wslc() -> str:
     override = os.environ.get("WSLC_COMPOSE_BIN")
     if override:
         return override
-    for name in ("wslc", "wslc.exe"):
+    for name in ("wslc.exe", "wslc"):
         path = shutil.which(name)
-        if path:
+        if path and not _is_self(path):
             return path
     for path in WSLC_FALLBACKS:
         if os.path.isfile(path):

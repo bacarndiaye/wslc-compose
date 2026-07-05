@@ -8,20 +8,26 @@ Microsoft's new `wslc` CLI (WSL container preview) manages single containers muc
 already use with Docker or Podman, and it drives `wslc` for you — networks, named volumes,
 bind mounts, dependency ordering, project-scoped naming and labels included.
 
+It installs a `wslc` wrapper command, so the muscle memory from `docker compose` /
+`podman compose` just works — any other subcommand is passed through to the real wslc CLI:
+
 ```console
 $ cd my-project        # contains compose.yaml
-$ wslc-compose up -d
+$ wslc compose up -d
 Network my-project_default created
 Volume my-project_data created
 Creating my-project-db-1 ...
 Creating my-project-web-1 ...
-$ wslc-compose ps
+$ wslc compose ps
 NAME               SERVICE  IMAGE         STATUS   PORTS
 my-project-db-1    db       postgres:16   running
 my-project-web-1   web      nginx:alpine  running  0.0.0.0:8080->80/tcp
-$ wslc-compose logs -f web
-$ wslc-compose down -v
+$ wslc compose logs -f web
+$ wslc compose down -v
+$ wslc images            # ← not a compose command: forwarded to wslc.exe verbatim
 ```
+
+(`wslc-compose` is also installed as a standalone command if you prefer.)
 
 ## Requirements
 
@@ -31,8 +37,19 @@ $ wslc-compose down -v
 
 ## Install
 
+One-liner (works even on WSL distros without pip/venv/pipx — it bootstraps
+[uv](https://docs.astral.sh/uv/) standalone if needed):
+
+```console
+curl -fsSL https://raw.githubusercontent.com/bacarndiaye/wslc-compose/main/install.sh | sh
+```
+
+Or, if you already have a Python package manager:
+
 ```console
 pipx install git+https://github.com/bacarndiaye/wslc-compose
+# or
+uv tool install --from git+https://github.com/bacarndiaye/wslc-compose wslc-compose
 # or
 pip install --user git+https://github.com/bacarndiaye/wslc-compose
 ```
