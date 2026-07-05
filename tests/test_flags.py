@@ -79,7 +79,7 @@ def test_build_args(tmp_path):
 
     args = build_args(project, job, no_cache=True, path_mapper=lambda p: f"WIN({p})")
     assert args[:3] == ["build", "-t", "demo-job"]
-    assert args[args.index("-f") + 1] == "Dockerfile.dev"
+    assert args[args.index("-f") + 1] == f"WIN({tmp_path / 'src' / 'Dockerfile.dev'})"
     assert "VERSION=1.2" in args
     assert args[args.index("--target") + 1] == "dev"
     assert "--no-cache" in args

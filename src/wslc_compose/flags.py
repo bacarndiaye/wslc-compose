@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Callable, List, Optional
 
 from wslc_compose import LABEL_CONFIG_HASH, LABEL_INDEX, LABEL_PROJECT, LABEL_SERVICE
@@ -112,7 +113,12 @@ def build_args(
     build = service.build
     args: List[str] = ["build", "-t", image_name(project, service)]
     if build.dockerfile:
-        args += ["-f", build.dockerfile]
+        # wslc resolves -f against its own cwd, not the build context: pass the
+        # dockerfile as an absolute path run through the same mapper as the context
+        dockerfile = build.dockerfile
+        if not os.path.isabs(dockerfile):
+            dockerfile = os.path.join(build.context, dockerfile)
+        args += ["-f", mapper(dockerfile)]
     for key, value in build.args.items():
         args += ["--build-arg", f"{key}={value}"]
     if build.target:
