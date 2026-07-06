@@ -451,6 +451,13 @@ stuck service PID (above) over rebooting.
 > that is **not** itself inside WSL — a `wsl --shutdown` (or the kill above) then
 > can't cut your own session out from under you.
 
+**`ERROR_SHARING_VIOLATION` on every session command, from every terminal** —
+`wslc list`/`run` fail with *"the process cannot access the file because it is
+being used by another process"* everywhere, while `wslc --version` still answers:
+the session store is locked machine-wide. We've hit this after many concurrent
+wslc invocations (the preview tolerates only one at a time — serialize yours).
+Recovery: `wsl --shutdown`; if it persists, the `Restart-Service` procedure above.
+
 **A published port works in the browser but not with `curl localhost` inside WSL** —
 expected: wslc publishes on the *Windows* loopback, which the distro's loopback
 doesn't see. Test from the Windows side.

@@ -211,6 +211,7 @@ Field notes from the current preview. Symptoms first:
 |---|---|---|
 | `Too many volumes have been mounted (limit: 15)` / `0x8007000e` | per-session mount budget exhausted (builds count too) | `wsl --shutdown` from Windows, reopen terminal, `up -d` again |
 | **Every** wslc command hangs, even `wslc list` | the session's Windows-side service relay is deadlocked | admin PowerShell: `Restart-Service WslService -Force` (older builds: `Restart-Service LxssManager -Force`) — this kills all of WSL |
+| `ERROR_SHARING_VIOLATION` on every session command (`list`, `run`…), from **every** terminal, while `wslc --version` still works | the session store is locked machine-wide (seen after storms of concurrent wslc invocations — the preview tolerates only one at a time) | `wsl --shutdown`; if it persists, the `Restart-Service WslService -Force` recovery above |
 | Containers/images/networks suddenly "gone" | you switched between an elevated and a normal terminal (separate sessions) | `wslc system session list`; go back to the right elevation |
 | Port taken but `wslc list -a` shows nothing using it | a container in the *other* elevation's session publishes it | stop it from a terminal with that elevation |
 | `wslc-compose: command not found` inside a script launched from PowerShell | non-login shell → `~/.local/bin` not on PATH | `export PATH="$HOME/.local/bin:$PATH"` at the top of the script |
