@@ -196,7 +196,7 @@ def cmd_up(ns: argparse.Namespace) -> int:
                     continue
                 if fresh and not current["running"]:
                     _info(f"Starting {cname} ...")
-                    engine.run(["start", cname], capture=True, dry_run=ns.dry_run)
+                    engine.run_retried(["start", cname], dry_run=ns.dry_run)
                     started.append(cname)
                     continue
                 _info(f"Recreating {cname} ...")
@@ -386,7 +386,7 @@ def _lifecycle(ns: argparse.Namespace, action: str) -> int:
             )
         if action in ("start", "restart"):
             _info(f"Starting {entry['name']} ...")
-            engine.run(["start", entry["name"]], capture=True, dry_run=ns.dry_run)
+            engine.run_retried(["start", entry["name"]], dry_run=ns.dry_run)
     return 0
 
 

@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from functools import lru_cache
 from typing import Dict, List, Optional
 
@@ -106,6 +107,40 @@ def run(
             + (f": {detail}" if detail else "")
         )
     return proc
+
+
+# Windows-side errors wslc can emit transiently: right after a stop the
+# container's kernel object is not always released yet (ERROR_ALREADY_EXISTS
+# on the next start), and the preview's session store rejects overlapping
+# invocations (ERROR_SHARING_VIOLATION). A bounded retry rides out the race;
+# a persistent machine-wide lock (docs/MIGRATION.md) still fails after the
+# last attempt.
+TRANSIENT_ERROR_MARKERS = ("ERROR_ALREADY_EXISTS", "ERROR_SHARING_VIOLATION")
+TRANSIENT_RETRIES = 5
+TRANSIENT_DELAY = 2.0
+
+
+def run_retried(
+    args: List[str],
+    dry_run: bool = False,
+    retries: int = TRANSIENT_RETRIES,
+    delay: float = TRANSIENT_DELAY,
+) -> subprocess.CompletedProcess:
+    """`run(capture=True)` that retries failures matching TRANSIENT_ERROR_MARKERS."""
+    for attempt in range(1, retries + 1):
+        try:
+            return run(args, capture=True, dry_run=dry_run)
+        except WslcError as exc:
+            transient = any(marker in str(exc) for marker in TRANSIENT_ERROR_MARKERS)
+            if not transient or attempt == retries:
+                raise
+            print(
+                f"wslc-compose: wslc {' '.join(args[:2])} hit a transient error, "
+                f"retrying in {delay:g}s ({attempt}/{retries - 1})...",
+                file=sys.stderr,
+            )
+            time.sleep(delay)
+    raise AssertionError("unreachable")
 
 
 def popen(args: List[str], **kwargs) -> subprocess.Popen:
