@@ -58,6 +58,9 @@ def run_args(
         if mount.read_only:
             spec += ":ro"
         args += ["-v", spec]
+    for mount in service.secrets + service.configs:
+        resource = (project.secrets | project.configs)[mount.source]
+        args += ["-v", f"{mapper(resource.file)}:{mount.target}:ro"]
     for target in service.tmpfs:
         args += ["--tmpfs", target]
 
@@ -159,7 +162,7 @@ def build_args(
         args += ["--target", build.target]
     if build.pull:
         args.append("--pull")
-    if no_cache:
+    if no_cache or build.no_cache:
         args.append("--no-cache")
     args.append(mapper(build.context))
     return args

@@ -12,6 +12,8 @@ import yaml
 from wslc_compose.interpolation import interpolate_tree
 from wslc_compose.model import (
     BuildConfig,
+    FileMount,
+    FileResource,
     HealthCheck,
     Network,
     PortMapping,
@@ -36,8 +38,6 @@ UNSUPPORTED_KEYS = {
     "privileged": "privileged mode is not supported by wslc",
     "devices": "device mapping is not supported by wslc (see 'gpus' for GPUs)",
     "sysctls": "sysctls are not supported by wslc",
-    "secrets": "secrets are not supported; use environment/env_file instead",
-    "configs": "configs are not supported; use bind mounts instead",
     "init": "init is not supported by wslc",
     "pid": "pid mode is not supported by wslc",
     "ipc": "ipc mode is not supported by wslc",
@@ -317,7 +317,22 @@ def _parse_build(value, project_dir: str) -> BuildConfig:
         args=_as_mapping(value.get("args"), "build.args"),
         target=value.get("target"),
         pull=bool(value.get("pull", False)),
+        no_cache=bool(value.get("no_cache", False)),
     )
+
+
+def _parse_file_mounts(value, project_dir: str, default_target: str):
+    mounts = []
+    for item in value or []:
+        if isinstance(item, str):
+            mounts.append(FileMount(item, default_target + item))
+        elif isinstance(item, dict) and item.get("source"):
+            source = str(item["source"])
+            target = str(item.get("target") or source)
+            mounts.append(FileMount(source, target if target.startswith("/") else default_target + target))
+        else:
+            raise ComposeError("secrets/configs entries require a source")
+    return mounts
 
 
 def load_project(
@@ -369,6 +384,14 @@ def load_project(
                                       driver=cfg.get("driver"),
                                       driver_opts=_as_mapping(cfg.get("driver_opts"), "driver_opts"),
                                       labels=_as_mapping(cfg.get("labels"), "labels"))
+
+    for kind, destination in (("secrets", project.secrets), ("configs", project.configs)):
+        for key, cfg in (raw.get(kind) or {}).items():
+            cfg = cfg or {}
+            if cfg.get("external") or not cfg.get("file"):
+                raise ComposeError(f"{kind}.{key}: only file-backed non-external resources are supported")
+            source = str(cfg["file"])
+            destination[str(key)] = FileResource(str(key), _resolve_bind_source(source, project_dir))
 
     # --- services ----------------------------------------------------------
     for svc_name, cfg in (raw.get("services") or {}).items():
@@ -459,6 +482,8 @@ def load_project(
         svc.shm_size = str(cfg["shm_size"]) if cfg.get("shm_size") is not None else None
         svc.stdin_open = bool(cfg.get("stdin_open", False))
         svc.tty = bool(cfg.get("tty", False))
+        svc.secrets = _parse_file_mounts(cfg.get("secrets"), project_dir, "/run/secrets/")
+        svc.configs = _parse_file_mounts(cfg.get("configs"), project_dir, "/")
         svc.healthcheck = _parse_healthcheck(cfg.get("healthcheck"))
         hosts = cfg.get("extra_hosts") or []
         svc.extra_hosts = ([f"{host}:{address}" for host, address in hosts.items()]

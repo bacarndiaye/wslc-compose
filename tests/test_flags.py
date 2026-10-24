@@ -5,7 +5,7 @@ import pytest
 from wslc_compose import LABEL_CONFIG_FILES, LABEL_PROJECT
 from wslc_compose.flags import build_args, image_name, run_args
 from wslc_compose.loader import load_project
-from wslc_compose.model import HealthCheck, Network, Project, Service, Volume, VolumeMount
+from wslc_compose.model import BuildConfig, FileMount, FileResource, HealthCheck, Network, Project, Service, Volume, VolumeMount
 from wslc_compose.model import VolumeMount
 
 COMPOSE = """
@@ -69,7 +69,7 @@ def test_experimental_config_hash_v2_matches_shared_golden_vector():
     service.healthcheck = HealthCheck(test=["CMD-SHELL", "true"], interval="30s", timeout="5s", start_period="10s", retries=3)
 
     assert service.config_hash_v2() == (
-        "v2:6287686f2d48447385fa3ce9160874ff9509b936ff7cfc86107cc777f36e6175"
+        "v2:123fb5441a9ada030206473b8a9e57dd3c4b9427bca4fd14c430b8cc4492716d"
     )
 
 
@@ -130,7 +130,7 @@ def test_experimental_hash_v2_matches_structured_mount_vector():
         VolumeMount("bind", "C:/data", "/data", True, ["propagation=rshared"], True)
     ])
 
-    assert service.config_hash_v2() == "v2:7b595d0e1585177529ab77d709a96d50ddc1a7929491d9ef7af8ae8c1072b692"
+    assert service.config_hash_v2() == "v2:3dc3d429cd0e51eccfd91d70ee45840b88b481155b88784ebc98eec552d8292b"
 
 
 def test_experimental_hash_v2_matches_internal_network_declaration_vector():
@@ -139,7 +139,7 @@ def test_experimental_hash_v2_matches_internal_network_declaration_vector():
         "private": Network(key="private", name="demo_private", internal=True)
     })
 
-    assert service.config_hash_v2(project) == "v2:b428020c7fecdd5a0c42f52aed18f8e901519e3779c4d1ffa791fe026e3fee01"
+    assert service.config_hash_v2(project) == "v2:71b342204cb8bd820f84186d09bb1d49924e128e38e739ce785c6eff41b3b517"
 
 
 def test_experimental_hash_v2_matches_volume_declaration_vector():
@@ -148,7 +148,39 @@ def test_experimental_hash_v2_matches_volume_declaration_vector():
         "data": Volume(key="data", name="demo_data", driver="guest", driver_opts={"size": "1G"}, labels={"purpose": "cache"})
     })
 
-    assert service.config_hash_v2(project) == "v2:b2dbf21a9131a1d5158d0f2e77900627e8c95e1fecbe79c8d5f373dc2c864dae"
+    assert service.config_hash_v2(project) == "v2:389dcfdf519e92cc3071481594d2bbc643e93b85c604a613c79c6671cf9fef0e"
+
+
+def test_experimental_hash_v2_matches_build_details_vector():
+    service = Service(name="web", image="fixture", build=BuildConfig(
+        context=".", dockerfile="Dockerfile.custom", args={"B": "2", "A": "1"}, target="release", pull=True, no_cache=True
+    ))
+
+    assert service.config_hash_v2() == "v2:eb176b4aaa65ee944a63a807012cfc69b6c39d87f52b6804ff3b61577dd7aa6d"
+
+
+def test_run_args_mount_file_backed_resources_readonly(tmp_path):
+    source = tmp_path / "secret.txt"
+    source.write_text("secret")
+    service = Service(name="web", image="fixture", secrets=[FileMount("token", "/run/secrets/token")])
+    project = Project(name="demo", directory=".", services={"web": service}, secrets={
+        "token": FileResource("token", str(source))
+    })
+
+    args = run_args(project, service, path_mapper=lambda path: f"WIN({path})")
+
+    assert f"WIN({source}):/run/secrets/token:ro" in args
+
+
+def test_experimental_hash_v2_matches_file_resource_vector(tmp_path):
+    source = tmp_path / "secret.txt"
+    source.write_text("secret")
+    service = Service(name="web", image="fixture", secrets=[FileMount("token", "/run/secrets/token")])
+    project = Project(name="demo", directory=".", services={"web": service}, secrets={
+        "token": FileResource("token", str(source))
+    })
+
+    assert service.config_hash_v2(project) == "v2:71e36565975d00b453c1d223e478cc7442832cbf9e434943ef6f2dd92c77e051"
 
 
 @pytest.mark.parametrize("mode", ["host", "none", "container:shared"])

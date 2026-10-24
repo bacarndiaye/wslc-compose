@@ -15,6 +15,7 @@ class BuildConfig:
     args: Dict[str, str] = field(default_factory=dict)
     target: Optional[str] = None
     pull: bool = False
+    no_cache: bool = False
 
 
 @dataclass
@@ -27,6 +28,18 @@ class VolumeMount:
     read_only: bool = False
     options: List[str] = field(default_factory=list)
     structured: bool = False
+
+
+@dataclass
+class FileResource:
+    name: str
+    file: str
+
+
+@dataclass
+class FileMount:
+    source: str
+    target: str
 
 
 @dataclass
@@ -89,6 +102,8 @@ class Service:
     tty: bool = False
     extra_hosts: List[str] = field(default_factory=list)
     network_mode: Optional[str] = None
+    secrets: List[FileMount] = field(default_factory=list)
+    configs: List[FileMount] = field(default_factory=list)
     healthcheck: Optional[HealthCheck] = None
     replicas: int = 1
     profiles: List[str] = field(default_factory=list)
@@ -177,6 +192,21 @@ class Service:
                 for volume in sorted(project.volumes.values(), key=lambda item: item.name)
                 if volume.name in volume_sources
             ] if project else []
+            payload["build_details"] = None if self.build is None else {
+                "dockerfile": self.build.dockerfile or "Dockerfile",
+                "args": dict(sorted(self.build.args.items())), "target": self.build.target,
+                "pull": self.build.pull, "no_cache": self.build.no_cache,
+            }
+            def file_mounts(mounts, resources):
+                result = []
+                for mount in sorted(mounts, key=lambda item: (item.target, item.source)):
+                    resource = resources[mount.source]
+                    with open(resource.file, "rb") as handle:
+                        result.append({"source": mount.source, "target": mount.target,
+                                       "sha256": hashlib.sha256(handle.read()).hexdigest()})
+                return result
+            payload["secrets"] = file_mounts(self.secrets, project.secrets) if project else []
+            payload["configs"] = file_mounts(self.configs, project.configs) if project else []
         blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return version + ":" + hashlib.sha256(blob.encode()).hexdigest()
 
@@ -208,6 +238,8 @@ class Project:
     services: Dict[str, Service] = field(default_factory=dict)
     networks: Dict[str, Network] = field(default_factory=dict)
     volumes: Dict[str, Volume] = field(default_factory=dict)
+    secrets: Dict[str, FileResource] = field(default_factory=dict)
+    configs: Dict[str, FileResource] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
 
     def container_name(self, service: Service, index: int = 1) -> str:

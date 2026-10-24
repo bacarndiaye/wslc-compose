@@ -248,6 +248,31 @@ volumes:
     assert volume.labels == {"purpose": "cache"}
 
 
+def test_file_backed_secrets_and_configs_are_normalized(tmp_path):
+    (tmp_path / "secret.txt").write_text("secret")
+    (tmp_path / "config.txt").write_text("config")
+    (tmp_path / "compose.yaml").write_text("""
+services:
+  a:
+    image: x
+    secrets: [token]
+    configs:
+      - source: app-config
+        target: app.conf
+secrets:
+  token:
+    file: ./secret.txt
+configs:
+  app-config:
+    file: ./config.txt
+""")
+
+    service = load_project(str(tmp_path / "compose.yaml")).services["a"]
+
+    assert service.secrets[0].target == "/run/secrets/token"
+    assert service.configs[0].target == "/app.conf"
+
+
 
 
 def test_long_form_mount_preserves_type_options_and_readonly(tmp_path):
