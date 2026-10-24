@@ -3,6 +3,7 @@ import json
 from wslc_compose import LABEL_CONFIG_FILES, LABEL_PROJECT
 from wslc_compose.flags import build_args, image_name, run_args
 from wslc_compose.loader import load_project
+from wslc_compose.model import Service
 
 COMPOSE = """
 name: demo
@@ -55,6 +56,14 @@ def test_config_hash_is_versioned_and_order_independent(tmp_path):
 
     assert original.startswith("v1:")
     assert original == web.config_hash()
+
+
+def test_experimental_config_hash_v2_matches_shared_golden_vector():
+    service = Service(name="web", image="fixture", stdin_open=True, gpus="all")
+
+    assert service.config_hash_v2() == (
+        "v2:87232db67c3f7ea028a4b58df19a58f8ead8fa3d7665fa1089891ce371820fdf"
+    )
 
 
 def test_run_args(tmp_path):

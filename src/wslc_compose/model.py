@@ -80,6 +80,13 @@ class Service:
 
     def config_hash(self) -> str:
         """Versioned hash of resolved runtime inputs for compatible Compose frontends."""
+        return self._config_hash("v1", include_v2_fields=False)
+
+    def config_hash_v2(self) -> str:
+        """Experimental shared hash; do not publish until the v2 contract is complete."""
+        return self._config_hash("v2", include_v2_fields=True)
+
+    def _config_hash(self, version: str, include_v2_fields: bool) -> str:
         payload = {
             "service": self.name,
             "image": self.image or "",
@@ -119,8 +126,11 @@ class Service:
             "shm_size": self.shm_size or "",
             "stop_signal": self.stop_signal or "",
         }
+        if include_v2_fields:
+            payload["stdin_open"] = self.stdin_open
+            payload["gpus_all"] = self.gpus == "all"
         blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-        return "v1:" + hashlib.sha256(blob.encode()).hexdigest()
+        return version + ":" + hashlib.sha256(blob.encode()).hexdigest()
 
 
 @dataclass
