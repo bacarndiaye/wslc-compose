@@ -448,6 +448,8 @@ def _apply_extra_hosts(container: str, hosts: List[str], dry_run: bool) -> None:
         engine.run(["exec", container, "sh", "-c", script], check=False, dry_run=dry_run)
 
 
+
+
 def _lifecycle(ns: argparse.Namespace, action: str) -> int:
     project = _load(ns)
     containers = _project_containers(project)
