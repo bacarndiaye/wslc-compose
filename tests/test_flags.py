@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from wslc_compose import LABEL_CONFIG_FILES, LABEL_PROJECT
 from wslc_compose.flags import build_args, image_name, run_args
 from wslc_compose.loader import load_project
@@ -67,7 +69,7 @@ def test_experimental_config_hash_v2_matches_shared_golden_vector():
     service.healthcheck = HealthCheck(test=["CMD-SHELL", "true"], interval="30s", timeout="5s", start_period="10s", retries=3)
 
     assert service.config_hash_v2() == (
-        "v2:27e45ce97dc82f4d4ea58617b2d36bef09a5aec21b7b9ec78acb602bc5b3b1cd"
+        "v2:3d5ff74e37f92dcc5d3984c9ccbcc00d4dfc77313b3d0f11364225dccad1c7d7"
     )
 
 
@@ -128,7 +130,27 @@ def test_experimental_hash_v2_matches_structured_mount_vector():
         VolumeMount("bind", "C:/data", "/data", True, ["propagation=rshared"], True)
     ])
 
-    assert service.config_hash_v2() == "v2:41cdf6adba2e32a6d00cf4722b61b64959e174888fc32fbdd5eeffbdcdb9c5e2"
+    assert service.config_hash_v2() == "v2:ebb7d1a2f95905b0c7aa749362ae076272db9fe576a9b3917ec1f81a28f706ce"
+
+
+@pytest.mark.parametrize("mode", ["host", "none", "container:shared"])
+def test_run_args_emit_network_mode(tmp_path, mode):
+    project = make_project(tmp_path)
+    service = project.services["web"]
+    service.network_mode = mode
+
+    args = run_args(project, service)
+
+    assert args[args.index("--network") + 1] == mode
+
+
+def test_run_args_resolve_service_network_mode(tmp_path):
+    project = make_project(tmp_path)
+    project.services["web"].network_mode = "service:job"
+
+    args = run_args(project, project.services["web"])
+
+    assert args[args.index("--network") + 1] == "container:demo-job-1"
 
 
 def test_run_args(tmp_path):

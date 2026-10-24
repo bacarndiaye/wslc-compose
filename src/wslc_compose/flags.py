@@ -61,7 +61,13 @@ def run_args(
     for target in service.tmpfs:
         args += ["--tmpfs", target]
 
-    if service.networks:
+    if service.network_mode:
+        mode = service.network_mode
+        if mode.startswith("service:"):
+            dependency = mode.split(":", 1)[1]
+            mode = "container:" + project.container_name(project.services[dependency])
+        args += ["--network", mode]
+    elif service.networks:
         args += ["--network", service.networks[0]]
         aliases = set(service.network_aliases.get(service.networks[0], []))
         aliases.add(service.name)

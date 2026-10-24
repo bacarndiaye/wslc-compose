@@ -88,6 +88,7 @@ class Service:
     stdin_open: bool = False
     tty: bool = False
     extra_hosts: List[str] = field(default_factory=list)
+    network_mode: Optional[str] = None
     healthcheck: Optional[HealthCheck] = None
     replicas: int = 1
     profiles: List[str] = field(default_factory=list)
@@ -161,6 +162,7 @@ class Service:
                  for mount in self.volumes if mount.structured),
                 key=lambda mount: (mount["target"], mount["source"] or ""),
             )
+            payload["network_mode"] = self.network_mode
         blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return version + ":" + hashlib.sha256(blob.encode()).hexdigest()
 

@@ -396,8 +396,10 @@ def load_project(
             svc.volumes.append(parse_volume(spec, project_dir))
         svc.tmpfs = _as_list(cfg.get("tmpfs"))
 
+        # network_mode replaces ordinary Compose network endpoints.
+        svc.network_mode = cfg.get("network_mode")
         # networks: list or mapping (with aliases); default network otherwise
-        raw_svc_networks = cfg.get("networks")
+        raw_svc_networks = None if svc.network_mode else cfg.get("networks")
         if raw_svc_networks is None:
             keys = ["default"]
             aliases: Dict[str, List[str]] = {}
