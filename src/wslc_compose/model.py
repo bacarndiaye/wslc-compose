@@ -75,6 +75,7 @@ class Service:
     gpus: Optional[str] = None
     stdin_open: bool = False
     tty: bool = False
+    extra_hosts: List[str] = field(default_factory=list)
     replicas: int = 1
     profiles: List[str] = field(default_factory=list)
     restart: Optional[str] = None  # accepted but not enforceable by wslc yet

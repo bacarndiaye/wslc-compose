@@ -34,7 +34,6 @@ UNSUPPORTED_KEYS = {
     "cap_drop": "capabilities are not configurable with wslc",
     "privileged": "privileged mode is not supported by wslc",
     "devices": "device mapping is not supported by wslc (see 'gpus' for GPUs)",
-    "extra_hosts": "extra_hosts is not supported by wslc",
     "sysctls": "sysctls are not supported by wslc",
     "secrets": "secrets are not supported; use environment/env_file instead",
     "configs": "configs are not supported; use bind mounts instead",
@@ -426,6 +425,11 @@ def load_project(
         svc.shm_size = str(cfg["shm_size"]) if cfg.get("shm_size") is not None else None
         svc.stdin_open = bool(cfg.get("stdin_open", False))
         svc.tty = bool(cfg.get("tty", False))
+        hosts = cfg.get("extra_hosts") or []
+        svc.extra_hosts = ([f"{host}:{address}" for host, address in hosts.items()]
+                           if isinstance(hosts, dict) else [str(host) for host in hosts])
+        if svc.extra_hosts:
+            project.warnings.append(f"{svc_name}: extra_hosts is applied after start; the entrypoint may not observe it")
         svc.profiles = _as_list(cfg.get("profiles"))
         svc.restart = cfg.get("restart")
         if svc.restart and svc.restart not in ("no", '"no"'):

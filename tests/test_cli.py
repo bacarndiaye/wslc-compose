@@ -84,6 +84,19 @@ def test_up_starts_unchanged_stopped_shared_container(monkeypatch):
     assert starts == [["start", "demo-web-1"]]
 
 
+def test_extra_hosts_are_applied_after_start(monkeypatch):
+    calls = []
+    monkeypatch.setattr(cli.engine, "run", lambda args, **kwargs: calls.append((args, kwargs)))
+
+    cli._apply_extra_hosts("demo-web-1", ["db:10.0.0.2", "host:host-gateway"], False)
+
+    args, kwargs = calls[0]
+    assert args[:4] == ["exec", "demo-web-1", "sh", "-c"]
+    assert "10.0.0.2 db" in args[4]
+    assert "$GW host" in args[4]
+    assert kwargs["check"] is False
+
+
 def test_project_containers_accepts_wslc_list_field_names(monkeypatch):
     monkeypatch.setattr(cli, "_format_created", lambda value: "3 seconds ago")
     monkeypatch.setattr(

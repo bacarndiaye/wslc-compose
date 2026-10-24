@@ -254,6 +254,7 @@ def cmd_up(ns: argparse.Namespace) -> int:
                 if fresh and not current["running"]:
                     _info(f"Starting {cname} ...")
                     engine.run_retried(["start", cname], dry_run=ns.dry_run)
+                    _apply_extra_hosts(cname, svc.extra_hosts, ns.dry_run)
                     started.append(cname)
                     continue
                 _info(f"Recreating {cname} ...")
@@ -270,6 +271,7 @@ def cmd_up(ns: argparse.Namespace) -> int:
                 ),
                 dry_run=ns.dry_run,
             )
+            _apply_extra_hosts(cname, svc.extra_hosts, ns.dry_run)
             started.append(cname)
 
         # drop replicas beyond the requested scale
@@ -430,6 +432,20 @@ def cmd_exec(ns: argparse.Namespace) -> int:
     args += ns.command
     proc = engine.run(args, check=False, dry_run=ns.dry_run)
     return proc.returncode
+
+
+def _apply_extra_hosts(container: str, hosts: List[str], dry_run: bool) -> None:
+    """Best-effort fallback while wslc has no native --add-host flag."""
+    lines = []
+    for entry in hosts:
+        host, sep, address = entry.partition(":")
+        if not sep or not host.strip() or not address.strip():
+            continue
+        addr = "$GW" if address.strip().lower() == "host-gateway" else address.strip()
+        lines.append(f'echo "{addr} {host.strip()}" >> /etc/hosts')
+    if lines:
+        script = "GW=$(ip route 2>/dev/null | awk '/^default/{print $3; exit}'); " + "; ".join(lines)
+        engine.run(["exec", container, "sh", "-c", script], check=False, dry_run=dry_run)
 
 
 def _lifecycle(ns: argparse.Namespace, action: str) -> int:
