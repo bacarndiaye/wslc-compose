@@ -171,12 +171,6 @@ class Service:
                 "start_period": health.start_period,
                 "retries": health.retries,
             }
-            payload["structured_mounts"] = sorted(
-                ({"type": mount.type, "source": mount.source, "target": mount.target,
-                  "read_only": mount.read_only, "options": sorted(mount.options)}
-                 for mount in self.volumes if mount.structured),
-                key=lambda mount: (mount["target"], mount["source"] or ""),
-            )
             payload["network_mode"] = self.network_mode
             declarations = []
             if project:

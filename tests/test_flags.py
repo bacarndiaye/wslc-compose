@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from wslc_compose import LABEL_CONFIG_FILES, LABEL_PROJECT
+from wslc_compose import LABEL_CONFIG_FILES, LABEL_CONFIG_HASH_V2, LABEL_PROJECT
 from wslc_compose.flags import build_args, image_name, run_args
 from wslc_compose.loader import load_project
 from wslc_compose.model import BuildConfig, FileMount, FileResource, HealthCheck, Network, Project, Service, Volume, VolumeMount
@@ -69,7 +69,7 @@ def test_experimental_config_hash_v2_matches_shared_golden_vector():
     service.healthcheck = HealthCheck(test=["CMD-SHELL", "true"], interval="30s", timeout="5s", start_period="10s", retries=3)
 
     assert service.config_hash_v2() == (
-        "v2:123fb5441a9ada030206473b8a9e57dd3c4b9427bca4fd14c430b8cc4492716d"
+        "v2:7761dc3ba3aec83fa3b3e25cad2dab47fd4dc3356f16d936db7e445f6acbbd29"
     )
 
 
@@ -130,7 +130,7 @@ def test_experimental_hash_v2_matches_structured_mount_vector():
         VolumeMount("bind", "C:/data", "/data", True, ["propagation=rshared"], True)
     ])
 
-    assert service.config_hash_v2() == "v2:3dc3d429cd0e51eccfd91d70ee45840b88b481155b88784ebc98eec552d8292b"
+    assert service.config_hash_v2() == "v2:4aed1aa484bbbd21d5b9dd0bb844b5cd4b38cc8d61167714ad7a2b443f5df6a6"
 
 
 def test_experimental_hash_v2_matches_internal_network_declaration_vector():
@@ -139,7 +139,7 @@ def test_experimental_hash_v2_matches_internal_network_declaration_vector():
         "private": Network(key="private", name="demo_private", internal=True)
     })
 
-    assert service.config_hash_v2(project) == "v2:c54eebce7360092c4d64852a8262529f0aa5bf92e9814e66b6073fe5e9def56c"
+    assert service.config_hash_v2(project) == "v2:c3f312f032f286e3d0e3b9206d517d7554619ae1a7d7a319ffcae9005fd71295"
 
 
 def test_experimental_hash_v2_matches_volume_declaration_vector():
@@ -148,7 +148,7 @@ def test_experimental_hash_v2_matches_volume_declaration_vector():
         "data": Volume(key="data", name="demo_data", driver="guest", driver_opts={"size": "1G"}, labels={"purpose": "cache"})
     })
 
-    assert service.config_hash_v2(project) == "v2:389dcfdf519e92cc3071481594d2bbc643e93b85c604a613c79c6671cf9fef0e"
+    assert service.config_hash_v2(project) == "v2:ea8b1dc7e8795f36d6114622ecd7dee6129c864d9c469f23a06c55b35b201a2d"
 
 
 def test_experimental_hash_v2_matches_build_details_vector():
@@ -156,7 +156,7 @@ def test_experimental_hash_v2_matches_build_details_vector():
         context=".", dockerfile="Dockerfile.custom", args={"B": "2", "A": "1"}, target="release", pull=True, no_cache=True
     ))
 
-    assert service.config_hash_v2() == "v2:eb176b4aaa65ee944a63a807012cfc69b6c39d87f52b6804ff3b61577dd7aa6d"
+    assert service.config_hash_v2() == "v2:164d845a98d8c8ab7bde344740746eece3ae176962411708b951be1497a0b0a9"
 
 
 def test_run_args_mount_file_backed_resources_readonly(tmp_path):
@@ -180,7 +180,7 @@ def test_experimental_hash_v2_matches_file_resource_vector(tmp_path):
         "token": FileResource("token", str(source))
     })
 
-    assert service.config_hash_v2(project) == "v2:71e36565975d00b453c1d223e478cc7442832cbf9e434943ef6f2dd92c77e051"
+    assert service.config_hash_v2(project) == "v2:fc35d18446cec55bb53d049552b93c0976d76391234c74a8b89e1cdbbc602e3e"
 
 
 @pytest.mark.parametrize("mode", ["host", "none", "container:shared"])
@@ -220,6 +220,7 @@ def test_run_args(tmp_path):
     assert args[args.index("--name") + 1] == "demo-web-1"
     assert f"{LABEL_PROJECT}=demo" in args
     assert f"{LABEL_CONFIG_FILES}={json.dumps([str(tmp_path / 'compose.yaml')], separators=(',', ':'))}" in args
+    assert any(arg.startswith(f"{LABEL_CONFIG_HASH_V2}=v2:") for arg in args)
     assert "FOO=bar" in args
     assert "8088:80" in args
 
