@@ -194,3 +194,27 @@ services:
     assert health is not None
     assert health.test == test
     assert health.disabled is disabled
+
+
+def test_long_form_mount_preserves_type_options_and_readonly(tmp_path):
+    (tmp_path / "compose.yaml").write_text("""
+services:
+  a:
+    image: x
+    volumes:
+      - type: bind
+        source: ./data
+        target: /data
+        read_only: true
+        bind:
+          propagation: rshared
+      - type: tmpfs
+        target: /cache
+        tmpfs:
+          size: 65536
+""")
+
+    mounts = load_project(str(tmp_path / "compose.yaml")).services["a"].volumes
+
+    assert mounts[0].structured and mounts[0].options == ["propagation=rshared"]
+    assert mounts[0].read_only and mounts[1].options == ["size=65536"]

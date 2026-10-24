@@ -4,6 +4,7 @@ from wslc_compose import LABEL_CONFIG_FILES, LABEL_PROJECT
 from wslc_compose.flags import build_args, image_name, run_args
 from wslc_compose.loader import load_project
 from wslc_compose.model import HealthCheck, Service
+from wslc_compose.model import VolumeMount
 
 COMPOSE = """
 name: demo
@@ -108,6 +109,18 @@ def test_disabled_healthcheck_emits_no_healthcheck(tmp_path):
     project.services["web"].healthcheck = HealthCheck(disabled=True)
 
     assert "--no-healthcheck" in run_args(project, project.services["web"])
+
+
+def test_run_args_emit_structured_mount(tmp_path):
+    project = make_project(tmp_path)
+    service = project.services["web"]
+    service.volumes = [VolumeMount("bind", str(tmp_path / "data"), "/data", True, ["propagation=rshared"], True)]
+
+    args = run_args(project, service, path_mapper=lambda path: f"WIN({path})")
+
+    assert args[args.index("--mount") + 1] == (
+        f"type=bind,source=WIN({tmp_path / 'data'}),target=/data,readonly,propagation=rshared"
+    )
 
 
 def test_run_args(tmp_path):

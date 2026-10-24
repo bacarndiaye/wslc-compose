@@ -37,6 +37,17 @@ def run_args(
         args += ["-p", port.to_flag()]
 
     for mount in service.volumes:
+        if mount.structured:
+            parts = [f"type={mount.type}"]
+            if mount.source:
+                source = mapper(mount.source) if mount.type == "bind" else mount.source
+                parts.append(f"source={source}")
+            parts.append(f"target={mount.target}")
+            if mount.read_only:
+                parts.append("readonly")
+            parts.extend(mount.options)
+            args += ["--mount", ",".join(parts)]
+            continue
         if mount.type == "tmpfs":
             args += ["--tmpfs", mount.target]
             continue

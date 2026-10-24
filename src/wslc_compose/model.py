@@ -25,6 +25,8 @@ class VolumeMount:
     source: Optional[str]  # host path or volume name (None for tmpfs)
     target: str
     read_only: bool = False
+    options: List[str] = field(default_factory=list)
+    structured: bool = False
 
 
 @dataclass

@@ -254,7 +254,13 @@ def parse_volume(spec, project_dir: str) -> VolumeMount:
         read_only = bool(spec.get("read_only", False))
         if vtype == "bind" and source:
             source = _resolve_bind_source(source, project_dir)
-        return VolumeMount(vtype, source, target, read_only)
+        options = []
+        for section in ("bind", "volume", "tmpfs"):
+            for key, value in (spec.get(section) or {}).items():
+                if isinstance(value, bool):
+                    value = str(value).lower()
+                options.append(f"{key}={value}")
+        return VolumeMount(vtype, source, target, read_only, options, True)
 
     parts = _split_volume_spec(str(spec))
     if len(parts) == 1:
