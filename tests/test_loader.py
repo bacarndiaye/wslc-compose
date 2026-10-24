@@ -169,3 +169,28 @@ services:
     text = "\n".join(project.warnings)
     assert "privileged" in text
     assert "restart" in text
+
+
+@pytest.mark.parametrize(
+    ("healthcheck", "test", "disabled"),
+    [
+        ("test: curl -f http://localhost", ["CMD-SHELL", "curl -f http://localhost"], False),
+        ("test: [CMD, curl, -f, http://localhost]", ["CMD", "curl", "-f", "http://localhost"], False),
+        ("test: [NONE]", ["NONE"], True),
+        ("disable: true", [], True),
+    ],
+)
+def test_healthcheck_forms_are_normalized(tmp_path, healthcheck, test, disabled):
+    (tmp_path / "compose.yaml").write_text(f"""
+services:
+  a:
+    image: x
+    healthcheck:
+      {healthcheck}
+""")
+
+    health = load_project(str(tmp_path / "compose.yaml")).services["a"].healthcheck
+
+    assert health is not None
+    assert health.test == test
+    assert health.disabled is disabled
