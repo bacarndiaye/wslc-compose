@@ -3,7 +3,7 @@ import json
 from wslc_compose import LABEL_CONFIG_FILES, LABEL_PROJECT
 from wslc_compose.flags import build_args, image_name, run_args
 from wslc_compose.loader import load_project
-from wslc_compose.model import Service
+from wslc_compose.model import HealthCheck, Service
 
 COMPOSE = """
 name: demo
@@ -63,9 +63,10 @@ def test_experimental_config_hash_v2_matches_shared_golden_vector():
     service = Service(
         name="web", image="fixture", stdin_open=True, gpus="all", tty=True, stop_timeout_seconds=90
     )
+    service.healthcheck = HealthCheck(test=["CMD-SHELL", "true"], interval="30s", timeout="5s", start_period="10s", retries=3)
 
     assert service.config_hash_v2() == (
-        "v2:29bc9fe093d84d3296e3dc507e8be4c743e681deb48da476694e84555fcfbed4"
+        "v2:a77054eda47a36a70a8d427936e96e84bbd6d285e9ac35836a1e0205a953f603"
     )
 
 
@@ -83,6 +84,30 @@ def test_run_args_include_stdin_and_gpu_flags(tmp_path):
     assert "-t" in args
     assert args[args.index("--gpus") + 1] == "all"
     assert args[args.index("--stop-timeout") + 1] == "90"
+
+
+def test_run_args_include_healthcheck_flags(tmp_path):
+    project = make_project(tmp_path)
+    service = project.services["web"]
+    service.healthcheck = HealthCheck(
+        test=["CMD-SHELL", "curl -f http://localhost/ || exit 1"], interval="30s",
+        timeout="5s", start_period="10s", retries=3,
+    )
+
+    args = run_args(project, service)
+
+    assert args[args.index("--health-cmd") + 1] == "curl -f http://localhost/ || exit 1"
+    assert args[args.index("--health-interval") + 1] == "30s"
+    assert args[args.index("--health-timeout") + 1] == "5s"
+    assert args[args.index("--health-start-period") + 1] == "10s"
+    assert args[args.index("--health-retries") + 1] == "3"
+
+
+def test_disabled_healthcheck_emits_no_healthcheck(tmp_path):
+    project = make_project(tmp_path)
+    project.services["web"].healthcheck = HealthCheck(disabled=True)
+
+    assert "--no-healthcheck" in run_args(project, project.services["web"])
 
 
 def test_run_args(tmp_path):

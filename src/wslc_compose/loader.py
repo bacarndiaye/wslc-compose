@@ -12,6 +12,7 @@ import yaml
 from wslc_compose.interpolation import interpolate_tree
 from wslc_compose.model import (
     BuildConfig,
+    HealthCheck,
     Network,
     PortMapping,
     Project,
@@ -104,6 +105,24 @@ def _as_command(value) -> Optional[List[str]]:
     if isinstance(value, str):
         return shlex.split(value)
     return [str(v) for v in value]
+
+
+def _parse_healthcheck(value) -> Optional[HealthCheck]:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ComposeError("healthcheck: expected mapping")
+    disabled = bool(value.get("disable", False))
+    test = value.get("test", [])
+    if isinstance(test, str):
+        test = ["CMD-SHELL", test]
+    else:
+        test = [str(part) for part in test]
+    if test and test[0] not in ("CMD", "CMD-SHELL", "NONE"):
+        raise ComposeError("healthcheck.test: expected CMD, CMD-SHELL, or NONE")
+    return HealthCheck(test=test, disabled=disabled or (test and test[0] == "NONE"),
+                       interval=value.get("interval"), timeout=value.get("timeout"),
+                       start_period=value.get("start_period"), retries=value.get("retries"))
 
 
 def _duration_seconds(value) -> int:
@@ -425,6 +444,7 @@ def load_project(
         svc.shm_size = str(cfg["shm_size"]) if cfg.get("shm_size") is not None else None
         svc.stdin_open = bool(cfg.get("stdin_open", False))
         svc.tty = bool(cfg.get("tty", False))
+        svc.healthcheck = _parse_healthcheck(cfg.get("healthcheck"))
         hosts = cfg.get("extra_hosts") or []
         svc.extra_hosts = ([f"{host}:{address}" for host, address in hosts.items()]
                            if isinstance(hosts, dict) else [str(host) for host in hosts])

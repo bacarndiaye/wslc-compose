@@ -43,6 +43,16 @@ class PortMapping:
 
 
 @dataclass
+class HealthCheck:
+    test: List[str] = field(default_factory=list)
+    disabled: bool = False
+    interval: Optional[str] = None
+    timeout: Optional[str] = None
+    start_period: Optional[str] = None
+    retries: Optional[int] = None
+
+
+@dataclass
 class Service:
     name: str
     image: Optional[str] = None
@@ -76,6 +86,7 @@ class Service:
     stdin_open: bool = False
     tty: bool = False
     extra_hosts: List[str] = field(default_factory=list)
+    healthcheck: Optional[HealthCheck] = None
     replicas: int = 1
     profiles: List[str] = field(default_factory=list)
     restart: Optional[str] = None  # accepted but not enforceable by wslc yet
@@ -133,6 +144,15 @@ class Service:
             payload["gpus_all"] = self.gpus == "all"
             payload["tty"] = self.tty
             payload["stop_timeout"] = self.stop_timeout_seconds
+            health = self.healthcheck
+            payload["healthcheck"] = None if health is None else {
+                "test": health.test,
+                "disabled": health.disabled,
+                "interval": health.interval,
+                "timeout": health.timeout,
+                "start_period": health.start_period,
+                "retries": health.retries,
+            }
         blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return version + ":" + hashlib.sha256(blob.encode()).hexdigest()
 

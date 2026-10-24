@@ -84,6 +84,21 @@ def run_args(
         args += ["--stop-signal", service.stop_signal]
     if service.stop_timeout_seconds is not None:
         args += ["--stop-timeout", str(service.stop_timeout_seconds)]
+    health = service.healthcheck
+    if health:
+        if health.disabled:
+            args.append("--no-healthcheck")
+        elif health.test:
+            command = health.test[1] if health.test[0] == "CMD-SHELL" and len(health.test) > 1 else " ".join(health.test[1:])
+            args += ["--health-cmd", command]
+            if health.interval:
+                args += ["--health-interval", health.interval]
+            if health.timeout:
+                args += ["--health-timeout", health.timeout]
+            if health.start_period:
+                args += ["--health-start-period", health.start_period]
+            if health.retries is not None:
+                args += ["--health-retries", str(health.retries)]
     if service.gpus:
         args += ["--gpus", service.gpus]
     if service.stdin_open:
