@@ -399,8 +399,11 @@ def load_project(
         # network_mode replaces ordinary Compose network endpoints.
         svc.network_mode = cfg.get("network_mode")
         # networks: list or mapping (with aliases); default network otherwise
-        raw_svc_networks = None if svc.network_mode else cfg.get("networks")
-        if raw_svc_networks is None:
+        raw_svc_networks = cfg.get("networks")
+        if svc.network_mode:
+            keys = []
+            aliases = {}
+        elif raw_svc_networks is None:
             keys = ["default"]
             aliases: Dict[str, List[str]] = {}
         elif isinstance(raw_svc_networks, list):

@@ -196,6 +196,20 @@ services:
     assert health.disabled is disabled
 
 
+def test_network_mode_does_not_create_default_network(tmp_path):
+    (tmp_path / "compose.yaml").write_text("""
+services:
+  a:
+    image: x
+    network_mode: none
+""")
+
+    project = load_project(str(tmp_path / "compose.yaml"))
+
+    assert project.services["a"].networks == []
+    assert project.networks == {}
+
+
 def test_long_form_mount_preserves_type_options_and_readonly(tmp_path):
     (tmp_path / "compose.yaml").write_text("""
 services:

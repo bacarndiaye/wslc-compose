@@ -153,6 +153,14 @@ def test_run_args_resolve_service_network_mode(tmp_path):
     assert args[args.index("--network") + 1] == "container:demo-job-1"
 
 
+def test_run_args_reject_unknown_service_network_mode(tmp_path):
+    project = make_project(tmp_path)
+    project.services["web"].network_mode = "service:missing"
+
+    with pytest.raises(ValueError, match="unknown service"):
+        run_args(project, project.services["web"])
+
+
 def test_run_args(tmp_path):
     project = make_project(tmp_path)
     args = run_args(project, project.services["web"], path_mapper=lambda p: f"WIN({p})")

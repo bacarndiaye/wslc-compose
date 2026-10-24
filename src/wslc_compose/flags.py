@@ -65,6 +65,8 @@ def run_args(
         mode = service.network_mode
         if mode.startswith("service:"):
             dependency = mode.split(":", 1)[1]
+            if dependency not in project.services:
+                raise ValueError(f"network_mode references unknown service {dependency!r}")
             mode = "container:" + project.container_name(project.services[dependency])
         args += ["--network", mode]
     elif service.networks:
