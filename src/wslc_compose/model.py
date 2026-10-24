@@ -98,11 +98,11 @@ class Service:
         """Versioned hash of resolved runtime inputs for compatible Compose frontends."""
         return self._config_hash("v1", include_v2_fields=False)
 
-    def config_hash_v2(self) -> str:
+    def config_hash_v2(self, project: Optional["Project"] = None) -> str:
         """Experimental shared hash; do not publish until the v2 contract is complete."""
-        return self._config_hash("v2", include_v2_fields=True)
+        return self._config_hash("v2", include_v2_fields=True, project=project)
 
-    def _config_hash(self, version: str, include_v2_fields: bool) -> str:
+    def _config_hash(self, version: str, include_v2_fields: bool, project: Optional["Project"] = None) -> str:
         payload = {
             "service": self.name,
             "image": self.image or "",
@@ -163,6 +163,13 @@ class Service:
                 key=lambda mount: (mount["target"], mount["source"] or ""),
             )
             payload["network_mode"] = self.network_mode
+            declarations = []
+            if project:
+                for network in sorted(project.networks.values(), key=lambda item: item.name):
+                    if network.name in self.networks:
+                        declarations.append({"name": network.name, "external": network.external,
+                                             "internal": network.internal})
+            payload["network_declarations"] = declarations
         blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return version + ":" + hashlib.sha256(blob.encode()).hexdigest()
 

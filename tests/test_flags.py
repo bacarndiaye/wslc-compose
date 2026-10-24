@@ -5,7 +5,7 @@ import pytest
 from wslc_compose import LABEL_CONFIG_FILES, LABEL_PROJECT
 from wslc_compose.flags import build_args, image_name, run_args
 from wslc_compose.loader import load_project
-from wslc_compose.model import HealthCheck, Service
+from wslc_compose.model import HealthCheck, Network, Project, Service
 from wslc_compose.model import VolumeMount
 
 COMPOSE = """
@@ -69,7 +69,7 @@ def test_experimental_config_hash_v2_matches_shared_golden_vector():
     service.healthcheck = HealthCheck(test=["CMD-SHELL", "true"], interval="30s", timeout="5s", start_period="10s", retries=3)
 
     assert service.config_hash_v2() == (
-        "v2:3d5ff74e37f92dcc5d3984c9ccbcc00d4dfc77313b3d0f11364225dccad1c7d7"
+        "v2:dbc84495391fb2014455e5d8e9d2b93b8330651287f3e090ded6c3e2c0bf2d9a"
     )
 
 
@@ -130,7 +130,16 @@ def test_experimental_hash_v2_matches_structured_mount_vector():
         VolumeMount("bind", "C:/data", "/data", True, ["propagation=rshared"], True)
     ])
 
-    assert service.config_hash_v2() == "v2:ebb7d1a2f95905b0c7aa749362ae076272db9fe576a9b3917ec1f81a28f706ce"
+    assert service.config_hash_v2() == "v2:58d0a450839c3c050054c80491d0747ecfeeb4895eeaf973169778958652312b"
+
+
+def test_experimental_hash_v2_matches_internal_network_declaration_vector():
+    service = Service(name="web", image="fixture", networks=["demo_private"])
+    project = Project(name="demo", directory=".", services={"web": service}, networks={
+        "private": Network(key="private", name="demo_private", internal=True)
+    })
+
+    assert service.config_hash_v2(project) == "v2:e9b3fceeb3118a866d0e7140bdc25a3bbe7f04d75fbbd13c03d69becd718922a"
 
 
 @pytest.mark.parametrize("mode", ["host", "none", "container:shared"])
