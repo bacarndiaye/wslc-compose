@@ -139,7 +139,7 @@ def test_experimental_hash_v2_matches_internal_network_declaration_vector():
         "private": Network(key="private", name="demo_private", internal=True)
     })
 
-    assert service.config_hash_v2(project) == "v2:71b342204cb8bd820f84186d09bb1d49924e128e38e739ce785c6eff41b3b517"
+    assert service.config_hash_v2(project) == "v2:c54eebce7360092c4d64852a8262529f0aa5bf92e9814e66b6073fe5e9def56c"
 
 
 def test_experimental_hash_v2_matches_volume_declaration_vector():

@@ -136,7 +136,7 @@ class Service:
                 (
                     {
                         "name": network,
-                        "aliases": sorted(self.network_aliases.get(network, [])),
+                        "aliases": sorted(set(self.network_aliases.get(network, []) + ([self.name] if include_v2_fields else []))),
                     }
                     for network in self.networks
                 ),
