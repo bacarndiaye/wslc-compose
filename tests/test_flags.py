@@ -66,6 +66,18 @@ def test_experimental_config_hash_v2_matches_shared_golden_vector():
     )
 
 
+def test_run_args_include_stdin_and_gpu_flags(tmp_path):
+    project = make_project(tmp_path)
+    service = project.services["web"]
+    service.stdin_open = True
+    service.gpus = "all"
+
+    args = run_args(project, service)
+
+    assert "-i" in args
+    assert args[args.index("--gpus") + 1] == "all"
+
+
 def test_run_args(tmp_path):
     project = make_project(tmp_path)
     args = run_args(project, project.services["web"], path_mapper=lambda p: f"WIN({p})")
