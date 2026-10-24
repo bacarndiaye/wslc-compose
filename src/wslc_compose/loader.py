@@ -365,7 +365,10 @@ def load_project(
         cfg = cfg or {}
         external = bool(cfg.get("external", False))
         vol_name = cfg.get("name") or (key if external else f"{name}_{key}")
-        project.volumes[key] = Volume(key=key, name=vol_name, external=external)
+        project.volumes[key] = Volume(key=key, name=vol_name, external=external,
+                                      driver=cfg.get("driver"),
+                                      driver_opts=_as_mapping(cfg.get("driver_opts"), "driver_opts"),
+                                      labels=_as_mapping(cfg.get("labels"), "labels"))
 
     # --- services ----------------------------------------------------------
     for svc_name, cfg in (raw.get("services") or {}).items():

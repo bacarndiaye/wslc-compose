@@ -5,7 +5,7 @@ import pytest
 from wslc_compose import LABEL_CONFIG_FILES, LABEL_PROJECT
 from wslc_compose.flags import build_args, image_name, run_args
 from wslc_compose.loader import load_project
-from wslc_compose.model import HealthCheck, Network, Project, Service
+from wslc_compose.model import HealthCheck, Network, Project, Service, Volume, VolumeMount
 from wslc_compose.model import VolumeMount
 
 COMPOSE = """
@@ -69,7 +69,7 @@ def test_experimental_config_hash_v2_matches_shared_golden_vector():
     service.healthcheck = HealthCheck(test=["CMD-SHELL", "true"], interval="30s", timeout="5s", start_period="10s", retries=3)
 
     assert service.config_hash_v2() == (
-        "v2:dbc84495391fb2014455e5d8e9d2b93b8330651287f3e090ded6c3e2c0bf2d9a"
+        "v2:6287686f2d48447385fa3ce9160874ff9509b936ff7cfc86107cc777f36e6175"
     )
 
 
@@ -130,7 +130,7 @@ def test_experimental_hash_v2_matches_structured_mount_vector():
         VolumeMount("bind", "C:/data", "/data", True, ["propagation=rshared"], True)
     ])
 
-    assert service.config_hash_v2() == "v2:58d0a450839c3c050054c80491d0747ecfeeb4895eeaf973169778958652312b"
+    assert service.config_hash_v2() == "v2:7b595d0e1585177529ab77d709a96d50ddc1a7929491d9ef7af8ae8c1072b692"
 
 
 def test_experimental_hash_v2_matches_internal_network_declaration_vector():
@@ -139,7 +139,16 @@ def test_experimental_hash_v2_matches_internal_network_declaration_vector():
         "private": Network(key="private", name="demo_private", internal=True)
     })
 
-    assert service.config_hash_v2(project) == "v2:e9b3fceeb3118a866d0e7140bdc25a3bbe7f04d75fbbd13c03d69becd718922a"
+    assert service.config_hash_v2(project) == "v2:b428020c7fecdd5a0c42f52aed18f8e901519e3779c4d1ffa791fe026e3fee01"
+
+
+def test_experimental_hash_v2_matches_volume_declaration_vector():
+    service = Service(name="web", image="fixture", volumes=[VolumeMount("volume", "demo_data", "/data")])
+    project = Project(name="demo", directory=".", services={"web": service}, volumes={
+        "data": Volume(key="data", name="demo_data", driver="guest", driver_opts={"size": "1G"}, labels={"purpose": "cache"})
+    })
+
+    assert service.config_hash_v2(project) == "v2:b2dbf21a9131a1d5158d0f2e77900627e8c95e1fecbe79c8d5f373dc2c864dae"
 
 
 @pytest.mark.parametrize("mode", ["host", "none", "container:shared"])

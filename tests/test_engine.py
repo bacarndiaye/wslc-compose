@@ -183,6 +183,15 @@ def test_ensure_volume_applies_resource_labels(monkeypatch):
     ]
 
 
+def test_ensure_volume_applies_driver_and_options(monkeypatch):
+    calls = []
+    monkeypatch.setattr(engine, "volume_names", lambda: [])
+    monkeypatch.setattr(engine, "run", lambda args, dry_run=False: calls.append((args, dry_run)))
+
+    assert engine.ensure_volume("demo_data", driver="guest", driver_opts={"size": "1G"})
+    assert calls == [(["volume", "create", "--driver", "guest", "--opt", "size=1G", "demo_data"], False)]
+
+
 def test_find_wslc_prefers_explicit_override(monkeypatch):
     monkeypatch.setenv("WSLC_COMPOSE_BIN", "D:\\WSL\\wslc.exe")
     engine.find_wslc.cache_clear()

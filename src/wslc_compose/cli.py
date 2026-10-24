@@ -218,7 +218,9 @@ def cmd_up(ns: argparse.Namespace) -> int:
                 raise ComposeError(f"external volume {vol.name!r} not found")
         elif engine.ensure_volume(
             vol.name,
-            labels=resource_labels(project, "volume", vol.key, vol.name),
+            labels={**vol.labels, **resource_labels(project, "volume", vol.key, vol.name)},
+            driver=vol.driver,
+            driver_opts=vol.driver_opts,
             dry_run=ns.dry_run,
         ):
             _info(f"Volume {vol.name} created")

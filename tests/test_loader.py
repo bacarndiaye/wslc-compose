@@ -226,6 +226,28 @@ networks:
     assert project.networks["private"].internal is True
 
 
+def test_volume_mapping_preserves_driver_options_and_labels(tmp_path):
+    (tmp_path / "compose.yaml").write_text("""
+services:
+  a:
+    image: x
+    volumes: [data:/data]
+volumes:
+  data:
+    driver: guest
+    driver_opts:
+      size: 1G
+    labels:
+      purpose: cache
+""")
+
+    volume = load_project(str(tmp_path / "compose.yaml")).volumes["data"]
+
+    assert volume.driver == "guest"
+    assert volume.driver_opts == {"size": "1G"}
+    assert volume.labels == {"purpose": "cache"}
+
+
 
 
 def test_long_form_mount_preserves_type_options_and_readonly(tmp_path):

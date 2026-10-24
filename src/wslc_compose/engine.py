@@ -250,10 +250,15 @@ def ensure_network(name: str, labels: Optional[Dict[str, str]] = None, internal:
     return True
 
 
-def ensure_volume(name: str, labels: Optional[Dict[str, str]] = None, dry_run: bool = False) -> bool:
+def ensure_volume(name: str, labels: Optional[Dict[str, str]] = None, driver: Optional[str] = None,
+                  driver_opts: Optional[Dict[str, str]] = None, dry_run: bool = False) -> bool:
     if name in volume_names():
         return False
     args = ["volume", "create"]
+    if driver:
+        args += ["--driver", driver]
+    for key, value in (driver_opts or {}).items():
+        args += ["--opt", f"{key}={value}"]
     for key, value in (labels or {}).items():
         args += ["-l", f"{key}={value}"]
     run(args + [name], dry_run=dry_run)

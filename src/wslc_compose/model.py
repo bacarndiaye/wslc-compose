@@ -170,6 +170,13 @@ class Service:
                         declarations.append({"name": network.name, "external": network.external,
                                              "internal": network.internal})
             payload["network_declarations"] = declarations
+            volume_sources = {mount.source for mount in self.volumes if mount.type == "volume" and mount.source}
+            payload["volume_declarations"] = [
+                {"name": volume.name, "external": volume.external, "driver": volume.driver or "",
+                 "driver_opts": dict(sorted(volume.driver_opts.items())), "labels": dict(sorted(volume.labels.items()))}
+                for volume in sorted(project.volumes.values(), key=lambda item: item.name)
+                if volume.name in volume_sources
+            ] if project else []
         blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return version + ":" + hashlib.sha256(blob.encode()).hexdigest()
 
@@ -187,6 +194,9 @@ class Volume:
     key: str
     name: str
     external: bool = False
+    driver: Optional[str] = None
+    driver_opts: Dict[str, str] = field(default_factory=dict)
+    labels: Dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
