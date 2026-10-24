@@ -10,6 +10,7 @@ name: demo
 services:
   web:
     image: nginx:alpine
+    stop_grace_period: 1m30s
     ports: ["8088:80"]
     volumes:
       - ./html:/usr/share/nginx/html:ro
@@ -59,10 +60,12 @@ def test_config_hash_is_versioned_and_order_independent(tmp_path):
 
 
 def test_experimental_config_hash_v2_matches_shared_golden_vector():
-    service = Service(name="web", image="fixture", stdin_open=True, gpus="all", tty=True)
+    service = Service(
+        name="web", image="fixture", stdin_open=True, gpus="all", tty=True, stop_timeout_seconds=90
+    )
 
     assert service.config_hash_v2() == (
-        "v2:1713f84f958f7a90e4822349cafbd0660036003a97dcf44d868e8f258ae841c0"
+        "v2:29bc9fe093d84d3296e3dc507e8be4c743e681deb48da476694e84555fcfbed4"
     )
 
 
@@ -72,12 +75,14 @@ def test_run_args_include_stdin_and_gpu_flags(tmp_path):
     service.stdin_open = True
     service.gpus = "all"
     service.tty = True
+    service.stop_timeout_seconds = 90
 
     args = run_args(project, service)
 
     assert "-i" in args
     assert "-t" in args
     assert args[args.index("--gpus") + 1] == "all"
+    assert args[args.index("--stop-timeout") + 1] == "90"
 
 
 def test_run_args(tmp_path):

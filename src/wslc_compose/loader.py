@@ -107,6 +107,18 @@ def _as_command(value) -> Optional[List[str]]:
     return [str(v) for v in value]
 
 
+def _duration_seconds(value) -> int:
+    """Normalize Compose durations such as 30s and 1m30s to whole seconds."""
+    raw = str(value).strip().lower()
+    if raw.isdigit():
+        return int(raw)
+    matches = list(re.finditer(r"(\d+(?:\.\d+)?)(ms|h|m|s)", raw))
+    if not matches or "".join(match.group(0) for match in matches) != raw:
+        raise ComposeError(f"stop_grace_period: invalid duration {value!r}")
+    seconds = sum(float(match.group(1)) * {"h": 3600, "m": 60, "s": 1, "ms": 0.001}[match.group(2)] for match in matches)
+    return max(1, round(seconds))
+
+
 def _as_mapping(value, what: str) -> Dict[str, str]:
     """Accept both list ("K=V") and mapping syntax for labels/build args."""
     result: Dict[str, str] = {}
@@ -409,6 +421,8 @@ def load_project(
         svc.working_dir = cfg.get("working_dir")
         svc.labels = _as_mapping(cfg.get("labels"), "labels")
         svc.stop_signal = cfg.get("stop_signal")
+        if cfg.get("stop_grace_period") is not None:
+            svc.stop_timeout_seconds = _duration_seconds(cfg["stop_grace_period"])
         svc.shm_size = str(cfg["shm_size"]) if cfg.get("shm_size") is not None else None
         svc.stdin_open = bool(cfg.get("stdin_open", False))
         svc.tty = bool(cfg.get("tty", False))

@@ -82,6 +82,8 @@ def run_args(
         args += ["--ulimit", ulimit]
     if service.stop_signal:
         args += ["--stop-signal", service.stop_signal]
+    if service.stop_timeout_seconds is not None:
+        args += ["--stop-timeout", str(service.stop_timeout_seconds)]
     if service.gpus:
         args += ["--gpus", service.gpus]
     if service.stdin_open:

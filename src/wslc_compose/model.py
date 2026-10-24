@@ -71,6 +71,7 @@ class Service:
     shm_size: Optional[str] = None
     ulimits: List[str] = field(default_factory=list)
     stop_signal: Optional[str] = None
+    stop_timeout_seconds: Optional[int] = None
     gpus: Optional[str] = None
     stdin_open: bool = False
     tty: bool = False
@@ -130,6 +131,7 @@ class Service:
             payload["stdin_open"] = self.stdin_open
             payload["gpus_all"] = self.gpus == "all"
             payload["tty"] = self.tty
+            payload["stop_timeout"] = self.stop_timeout_seconds
         blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return version + ":" + hashlib.sha256(blob.encode()).hexdigest()
 
