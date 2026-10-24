@@ -67,7 +67,7 @@ def test_experimental_config_hash_v2_matches_shared_golden_vector():
     service.healthcheck = HealthCheck(test=["CMD-SHELL", "true"], interval="30s", timeout="5s", start_period="10s", retries=3)
 
     assert service.config_hash_v2() == (
-        "v2:a77054eda47a36a70a8d427936e96e84bbd6d285e9ac35836a1e0205a953f603"
+        "v2:27e45ce97dc82f4d4ea58617b2d36bef09a5aec21b7b9ec78acb602bc5b3b1cd"
     )
 
 
@@ -121,6 +121,14 @@ def test_run_args_emit_structured_mount(tmp_path):
     assert args[args.index("--mount") + 1] == (
         f"type=bind,source=WIN({tmp_path / 'data'}),target=/data,readonly,propagation=rshared"
     )
+
+
+def test_experimental_hash_v2_matches_structured_mount_vector():
+    service = Service(name="web", image="fixture", volumes=[
+        VolumeMount("bind", "C:/data", "/data", True, ["propagation=rshared"], True)
+    ])
+
+    assert service.config_hash_v2() == "v2:41cdf6adba2e32a6d00cf4722b61b64959e174888fc32fbdd5eeffbdcdb9c5e2"
 
 
 def test_run_args(tmp_path):
