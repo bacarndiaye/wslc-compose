@@ -129,6 +129,7 @@ class Service:
         if include_v2_fields:
             payload["stdin_open"] = self.stdin_open
             payload["gpus_all"] = self.gpus == "all"
+            payload["tty"] = self.tty
         blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return version + ":" + hashlib.sha256(blob.encode()).hexdigest()
 
