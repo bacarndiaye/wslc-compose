@@ -159,6 +159,15 @@ def test_ensure_network_applies_resource_labels(monkeypatch):
     ]
 
 
+def test_ensure_network_applies_internal_flag(monkeypatch):
+    calls = []
+    monkeypatch.setattr(engine, "network_names", lambda: [])
+    monkeypatch.setattr(engine, "run", lambda args, dry_run=False: calls.append((args, dry_run)))
+
+    assert engine.ensure_network("demo_private", internal=True)
+    assert calls == [(["network", "create", "--internal", "demo_private"], False)]
+
+
 def test_ensure_volume_applies_resource_labels(monkeypatch):
     calls = []
     monkeypatch.setattr(engine, "volume_names", lambda: [])

@@ -202,6 +202,7 @@ def cmd_up(ns: argparse.Namespace) -> int:
         elif engine.ensure_network(
             net.name,
             labels=resource_labels(project, "network", net.key, net.name),
+            internal=net.internal,
             dry_run=ns.dry_run,
         ):
             _info(f"Network {net.name} created")

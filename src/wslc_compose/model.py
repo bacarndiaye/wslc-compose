@@ -172,6 +172,7 @@ class Network:
     key: str  # name used in the compose file
     name: str  # actual wslc network name
     external: bool = False
+    internal: bool = False
 
 
 @dataclass

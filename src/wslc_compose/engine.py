@@ -237,12 +237,15 @@ def volume_names() -> List[str]:
     return _names_from_json(["volume", "list", "--format", "json"])
 
 
-def ensure_network(name: str, labels: Optional[Dict[str, str]] = None, dry_run: bool = False) -> bool:
+def ensure_network(name: str, labels: Optional[Dict[str, str]] = None, internal: bool = False,
+                   dry_run: bool = False) -> bool:
     if name in network_names():
         return False
     args = ["network", "create"]
     for key, value in (labels or {}).items():
         args += ["-l", f"{key}={value}"]
+    if internal:
+        args.append("--internal")
     run(args + [name], dry_run=dry_run)
     return True
 

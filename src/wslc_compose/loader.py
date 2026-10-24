@@ -357,7 +357,8 @@ def load_project(
         cfg = cfg or {}
         external = bool(cfg.get("external", False))
         net_name = cfg.get("name") or (key if external else f"{name}_{key}")
-        project.networks[key] = Network(key=key, name=net_name, external=external)
+        project.networks[key] = Network(key=key, name=net_name, external=external,
+                                        internal=bool(cfg.get("internal", False)))
 
     raw_volumes = raw.get("volumes") or {}
     for key, cfg in raw_volumes.items():

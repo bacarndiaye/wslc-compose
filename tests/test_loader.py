@@ -210,6 +210,22 @@ services:
     assert project.networks == {}
 
 
+def test_network_mapping_preserves_internal_flag(tmp_path):
+    (tmp_path / "compose.yaml").write_text("""
+services:
+  a:
+    image: x
+    networks: [private]
+networks:
+  private:
+    internal: true
+""")
+
+    project = load_project(str(tmp_path / "compose.yaml"))
+
+    assert project.networks["private"].internal is True
+
+
 
 
 def test_long_form_mount_preserves_type_options_and_readonly(tmp_path):
