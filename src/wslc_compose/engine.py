@@ -195,8 +195,7 @@ def list_project_containers(project: str, all_states: bool = False) -> List[dict
     args = ["list", "--format", "json", "-f", f"label={LABEL_PROJECT}={project}"]
     if all_states:
         args.insert(1, "-a")
-    result = capture_json(args)
-    return result if isinstance(result, list) else []
+    return capture_json(args)
 
 
 def inspect(object_id: str) -> Optional[dict]:
@@ -238,15 +237,21 @@ def volume_names() -> List[str]:
     return _names_from_json(["volume", "list", "--format", "json"])
 
 
-def ensure_network(name: str, dry_run: bool = False) -> bool:
+def ensure_network(name: str, labels: Optional[Dict[str, str]] = None, dry_run: bool = False) -> bool:
     if name in network_names():
         return False
-    run(["network", "create", name], dry_run=dry_run)
+    args = ["network", "create"]
+    for key, value in (labels or {}).items():
+        args += ["-l", f"{key}={value}"]
+    run(args + [name], dry_run=dry_run)
     return True
 
 
-def ensure_volume(name: str, dry_run: bool = False) -> bool:
+def ensure_volume(name: str, labels: Optional[Dict[str, str]] = None, dry_run: bool = False) -> bool:
     if name in volume_names():
         return False
-    run(["volume", "create", name], dry_run=dry_run)
+    args = ["volume", "create"]
+    for key, value in (labels or {}).items():
+        args += ["-l", f"{key}={value}"]
+    run(args + [name], dry_run=dry_run)
     return True

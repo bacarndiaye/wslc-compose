@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import Callable, List, Optional
 
-from wslc_compose import LABEL_CONFIG_HASH, LABEL_INDEX, LABEL_PROJECT, LABEL_SERVICE
+from wslc_compose.metadata import container_labels
 from wslc_compose.model import Project, Service
 
 
@@ -23,11 +23,9 @@ def run_args(
         args.append("-d")
 
     args += ["--name", project.container_name(service, index)]
-    args += ["-l", f"{LABEL_PROJECT}={project.name}"]
-    args += ["-l", f"{LABEL_SERVICE}={service.name}"]
-    args += ["-l", f"{LABEL_INDEX}={index}"]
-    args += ["-l", f"{LABEL_CONFIG_HASH}={service.config_hash()}"]
     for key, value in service.labels.items():
+        args += ["-l", f"{key}={value}"]
+    for key, value in container_labels(project, service, index).items():
         args += ["-l", f"{key}={value}"]
 
     for env_file in service.env_files:

@@ -1,4 +1,6 @@
-from wslc_compose import LABEL_PROJECT
+import json
+
+from wslc_compose import LABEL_CONFIG_FILES, LABEL_PROJECT
 from wslc_compose.flags import build_args, image_name, run_args
 from wslc_compose.loader import load_project
 
@@ -42,6 +44,19 @@ def make_project(tmp_path):
     return load_project(str(tmp_path / "compose.yaml"))
 
 
+def test_config_hash_is_versioned_and_order_independent(tmp_path):
+    project = make_project(tmp_path)
+    web = project.services["web"]
+    original = web.config_hash()
+
+    web.environment = dict(reversed(list(web.environment.items())))
+    web.labels = dict(reversed(list(web.labels.items())))
+    web.network_aliases = {name: list(reversed(aliases)) for name, aliases in web.network_aliases.items()}
+
+    assert original.startswith("v1:")
+    assert original == web.config_hash()
+
+
 def test_run_args(tmp_path):
     project = make_project(tmp_path)
     args = run_args(project, project.services["web"], path_mapper=lambda p: f"WIN({p})")
@@ -50,6 +65,7 @@ def test_run_args(tmp_path):
     assert "-d" in args
     assert args[args.index("--name") + 1] == "demo-web-1"
     assert f"{LABEL_PROJECT}=demo" in args
+    assert f"{LABEL_CONFIG_FILES}={json.dumps([str(tmp_path / 'compose.yaml')], separators=(',', ':'))}" in args
     assert "FOO=bar" in args
     assert "8088:80" in args
 

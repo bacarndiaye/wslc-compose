@@ -79,8 +79,48 @@ class Service:
     restart: Optional[str] = None  # accepted but not enforceable by wslc yet
 
     def config_hash(self) -> str:
-        blob = json.dumps(self, default=lambda o: o.__dict__, sort_keys=True)
-        return hashlib.sha256(blob.encode()).hexdigest()[:16]
+        """Versioned hash of resolved runtime inputs for compatible Compose frontends."""
+        payload = {
+            "service": self.name,
+            "image": self.image or "",
+            # Build context changes require an explicit build. The shared runtime
+            # fingerprint only records that the service's image is build-backed.
+            "build": self.build is not None,
+            "command": self.command or [],
+            "entrypoint": self.entrypoint or [],
+            "environment": dict(sorted(self.environment.items())),
+            "ports": sorted({port.to_flag() for port in self.ports}),
+            "mounts": sorted({
+                f"{mount.source or ''}:{mount.target}" + (":ro" if mount.read_only else "")
+                for mount in self.volumes
+            }),
+            "networks": sorted(
+                (
+                    {
+                        "name": network,
+                        "aliases": sorted(self.network_aliases.get(network, [])),
+                    }
+                    for network in self.networks
+                ),
+                key=lambda network: network["name"],
+            ),
+            "labels": dict(sorted(self.labels.items())),
+            "hostname": self.hostname or "",
+            "domainname": self.domainname or "",
+            "user": self.user or "",
+            "working_dir": self.working_dir or "",
+            "dns": sorted(set(self.dns)),
+            "dns_search": sorted(set(self.dns_search)),
+            "dns_opt": sorted(set(self.dns_opt)),
+            "tmpfs": sorted(set(self.tmpfs)),
+            "ulimits": sorted(set(self.ulimits)),
+            "mem_limit": self.mem_limit or "",
+            "cpus": self.cpus or "",
+            "shm_size": self.shm_size or "",
+            "stop_signal": self.stop_signal or "",
+        }
+        blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        return "v1:" + hashlib.sha256(blob.encode()).hexdigest()
 
 
 @dataclass
@@ -101,6 +141,8 @@ class Volume:
 class Project:
     name: str
     directory: str
+    compose_files: List[str] = field(default_factory=list)
+    env_file: Optional[str] = None
     services: Dict[str, Service] = field(default_factory=dict)
     networks: Dict[str, Network] = field(default_factory=dict)
     volumes: Dict[str, Volume] = field(default_factory=dict)

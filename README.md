@@ -302,15 +302,46 @@ Everything is scoped by project so multiple projects coexist cleanly:
 | volume | `<project>_<volume-key>` (external volumes keep their name) |
 | built image | `<project>-<service>` (unless `image:` is set) |
 
-Each container gets tracking labels, which is how commands find project containers
-(`wslc list -f label=com.wslc-compose.project=<name>`):
+`wslc-compose` records Compose metadata as WSLc labels. New resources use the
+`com.wslc-compose.*` namespace, preserving the container labels used by earlier
+versions:
 
 ```
-com.wslc-compose.project           project name
-com.wslc-compose.service           service name
-com.wslc-compose.container-number  replica index (1..N)
-com.wslc-compose.config-hash       hash of the resolved service config
+com.wslc-compose.project                     project name
+com.wslc-compose.version                     wslc-compose version that created it
+com.wslc-compose.project.working_dir         absolute project directory
+com.wslc-compose.project.config_files        JSON array of absolute Compose file paths
+com.wslc-compose.project.environment_file    absolute --env-file path, when supplied
+com.wslc-compose.config-hash                 resolved service or resource configuration hash
+com.wslc-compose.service                     container service name
+com.wslc-compose.container-number            container replica index (1..N)
+com.wslc-compose.network                     Compose network key
+com.wslc-compose.volume                      Compose volume key
 ```
+
+Containers receive the project labels plus `service` and `container-number`.
+Internally-created networks and named volumes receive the project labels plus their
+respective `network` or `volume` key. This lets other WSLc tools identify all of the
+resources belonging to a Compose project.
+
+Inspect labels with the native WSLc commands:
+
+```powershell
+wslc inspect <container-name>
+wslc network inspect <network-name>
+wslc volume inspect <volume-name>
+```
+
+Earlier versions applied only `project`, `service`, `container-number`, and
+`config-hash` to containers. They did not label networks or volumes. Container
+discovery still uses the existing `com.wslc-compose.project` label. Networks and
+volumes continue to be managed by their resolved Compose names, so unlabelled
+resources from earlier versions remain usable and removable.
+
+Existing networks and volumes are never relabelled: `up` reuses them unchanged.
+Likewise, resources declared with `external: true` are neither labelled nor adopted.
+New internal resources receive the additional metadata labels. Recreating a named
+volume removes its data when using `down -v`.
 
 ## How `up` decides what to do
 

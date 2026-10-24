@@ -71,7 +71,7 @@ def test_list_project_containers_excludes_stopped_by_default(monkeypatch):
 
     assert engine.list_project_containers("demo") == []
     assert calls == [
-        ["list", "--format", "json", "-f", "label=com.wslc-compose.project=demo"]
+        ["list", "--format", "json", "-f", "label=com.wslc-compose.project=demo"],
     ]
 
 
@@ -86,7 +86,7 @@ def test_list_project_containers_includes_all_states_when_requested(monkeypatch)
 
     assert engine.list_project_containers("demo", all_states=True) == []
     assert calls == [
-        ["list", "-a", "--format", "json", "-f", "label=com.wslc-compose.project=demo"]
+        ["list", "-a", "--format", "json", "-f", "label=com.wslc-compose.project=demo"],
     ]
 
 
@@ -142,6 +142,36 @@ def test_volume_names_uses_json_inventory(monkeypatch):
     monkeypatch.setattr(engine, "capture_json", lambda args: [{"Name": "purchase-service_data"}])
 
     assert engine.volume_names() == ["purchase-service_data"]
+
+
+def test_ensure_network_applies_resource_labels(monkeypatch):
+    calls = []
+    monkeypatch.setattr(engine, "network_names", lambda: [])
+    monkeypatch.setattr(
+        engine,
+        "run",
+        lambda args, dry_run=False: calls.append((args, dry_run)),
+    )
+
+    assert engine.ensure_network("demo_default", {"com.wslc-compose.project": "demo"})
+    assert calls == [
+        (["network", "create", "-l", "com.wslc-compose.project=demo", "demo_default"], False)
+    ]
+
+
+def test_ensure_volume_applies_resource_labels(monkeypatch):
+    calls = []
+    monkeypatch.setattr(engine, "volume_names", lambda: [])
+    monkeypatch.setattr(
+        engine,
+        "run",
+        lambda args, dry_run=False: calls.append((args, dry_run)),
+    )
+
+    assert engine.ensure_volume("demo_data", {"com.wslc-compose.project": "demo"})
+    assert calls == [
+        (["volume", "create", "-l", "com.wslc-compose.project=demo", "demo_data"], False)
+    ]
 
 
 def test_find_wslc_prefers_explicit_override(monkeypatch):

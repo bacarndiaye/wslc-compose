@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+from datetime import datetime, timezone
 import os
 import signal
 import subprocess
@@ -22,6 +23,7 @@ from wslc_compose import (
 from wslc_compose import engine, flags
 from wslc_compose.engine import WslcError
 from wslc_compose.loader import ComposeError, find_compose_file, load_project
+from wslc_compose.metadata import resource_labels
 from wslc_compose.model import Project, Service
 
 PROTOCOLS = {6: "tcp", 17: "udp"}
@@ -97,16 +99,24 @@ def _project_containers(project: Project, all_states: bool = False) -> List[dict
         data = engine.inspect(identifier) or {}
         labels = data.get("Labels") or {}
         state = data.get("State") or {}
+        config = data.get("Config") or {}
+        command = entry.get("Command")
+        if not command:
+            command = " ".join(
+                (config.get("Entrypoint") or []) + (config.get("Cmd") or [])
+            )
         enriched.append(
             {
                 "id": container_id,
                 "name": container_name or data.get("Name"),
                 "image": entry.get("Image") or data.get("Image"),
+                "command": command or "",
                 "service": labels.get(LABEL_SERVICE, ""),
                 "index": int(labels.get(LABEL_INDEX, "1") or 1),
                 "hash": labels.get(LABEL_CONFIG_HASH, ""),
                 "running": bool(state.get("Running")),
-                "status": state.get("Status", "unknown"),
+                "created": _format_created(entry.get("CreatedAt") or data.get("Created") or ""),
+                "status": entry.get("Status") or state.get("Status", "unknown"),
                 "ports": entry.get("Ports") or [],
             }
         )
@@ -124,15 +134,45 @@ def _format_ports(ports: List[dict]) -> str:
     return ", ".join(parts)
 
 
+def _format_created(value: str, now: Optional[datetime] = None) -> str:
+    """Format WSLc's absolute creation timestamp like Docker Compose."""
+    try:
+        if len(value) > 10 and value[10] == "T":
+            created = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        else:
+            # WSLc appends a time-zone abbreviation after the numeric offset.
+            created = datetime.strptime(value.rsplit(" ", 1)[0], "%Y-%m-%d %H:%M:%S %z")
+        seconds = max(0, int(((now or datetime.now(timezone.utc)) - created).total_seconds()))
+    except (TypeError, ValueError):
+        return value
+
+    if seconds < 60:
+        unit = "second" if seconds == 1 else "seconds"
+        return f"{seconds} {unit} ago"
+    if seconds < 90:
+        return "About a minute ago"
+    if seconds < 45 * 60:
+        return f"{seconds // 60} minutes ago"
+    if seconds < 90 * 60:
+        return "About an hour ago"
+    if seconds < 24 * 60 * 60:
+        return f"{seconds // 3600} hours ago"
+    if seconds < 42 * 60 * 60:
+        return "About a day ago"
+    return f"{seconds // 86400} days ago"
+
+
 def _print_table(rows: List[List[str]], headers: List[str]) -> None:
-    widths = [len(h) for h in headers]
+    # Docker Compose starts each column at least ten characters after the previous one.
+    # With the two-character separator below, cells need a minimum width of eight.
+    widths = [max(8, len(h)) for h in headers]
     for row in rows:
         for i, cell in enumerate(row):
             widths[i] = max(widths[i], len(cell))
     fmt = "  ".join(f"{{:<{w}}}" for w in widths)
-    print(fmt.format(*headers))
+    print(fmt.format(*headers).rstrip())
     for row in rows:
-        print(fmt.format(*row))
+        print(fmt.format(*row).rstrip())
 
 
 # --- commands ----------------------------------------------------------------
@@ -159,7 +199,11 @@ def cmd_up(ns: argparse.Namespace) -> int:
         if net.external:
             if net.name not in engine.network_names():
                 raise ComposeError(f"external network {net.name!r} not found")
-        elif engine.ensure_network(net.name, dry_run=ns.dry_run):
+        elif engine.ensure_network(
+            net.name,
+            labels=resource_labels(project, "network", net.key, net.name),
+            dry_run=ns.dry_run,
+        ):
             _info(f"Network {net.name} created")
 
     needed_volumes = {
@@ -171,7 +215,11 @@ def cmd_up(ns: argparse.Namespace) -> int:
         if vol.external:
             if vol.name not in engine.volume_names():
                 raise ComposeError(f"external volume {vol.name!r} not found")
-        elif engine.ensure_volume(vol.name, dry_run=ns.dry_run):
+        elif engine.ensure_volume(
+            vol.name,
+            labels=resource_labels(project, "volume", vol.key, vol.name),
+            dry_run=ns.dry_run,
+        ):
             _info(f"Volume {vol.name} created")
 
     for svc in services:
@@ -183,7 +231,9 @@ def cmd_up(ns: argparse.Namespace) -> int:
                 dry_run=ns.dry_run,
             )
 
-    existing = {c["name"]: c for c in _project_containers(project)} if not ns.dry_run else {}
+    # Include exited containers so `up` can start an unchanged service instead
+    # of colliding with its existing Compose name.
+    existing = {c["name"]: c for c in _project_containers(project, all_states=True)} if not ns.dry_run else {}
     started: List[str] = []
 
     for svc in services:
@@ -280,14 +330,19 @@ def cmd_ps(ns: argparse.Namespace) -> int:
     rows = [
         [
             entry["name"] or "",
-            entry["service"] or "",
             entry["image"] or "",
+            entry["command"],
+            entry["service"] or "",
+            entry["created"],
             entry["status"] or "",
             _format_ports(entry["ports"]),
         ]
         for entry in sorted(containers, key=lambda c: (c["service"], c["index"]))
     ]
-    _print_table(rows, ["NAME", "SERVICE", "IMAGE", "STATUS", "PORTS"])
+    _print_table(
+        rows,
+        ["NAME", "IMAGE", "COMMAND", "SERVICE", "CREATED", "STATUS", "PORTS"],
+    )
     return 0
 
 

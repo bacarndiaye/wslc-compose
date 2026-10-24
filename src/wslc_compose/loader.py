@@ -308,7 +308,12 @@ def load_project(
         or (str(raw["name"]) if raw.get("name") else "")
         or os.path.basename(project_dir)
     )
-    project = Project(name=name, directory=project_dir)
+    project = Project(
+        name=name,
+        directory=project_dir,
+        compose_files=[compose_file],
+        env_file=os.path.abspath(env_file) if env_file else None,
+    )
 
     # --- top level networks & volumes -------------------------------------
     raw_networks = raw.get("networks") or {}
