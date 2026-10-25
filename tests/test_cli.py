@@ -143,7 +143,6 @@ def test_project_containers_accepts_wslc_list_field_names(monkeypatch):
             "service": "oracle",
                 "index": 1,
                 "hash": "abc123",
-                "hash_v2": "",
                 "running": True,
             "created": "3 seconds ago",
             "status": "Up 6 seconds",

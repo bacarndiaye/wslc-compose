@@ -9,7 +9,6 @@ from typing import Dict
 from wslc_compose import (
     LABEL_CONFIG_FILES,
     LABEL_CONFIG_HASH,
-    LABEL_CONFIG_HASH_V2,
     LABEL_ENV_FILE,
     LABEL_INDEX,
     LABEL_NETWORK,
@@ -37,13 +36,11 @@ def _project_labels(project: Project) -> Dict[str, str]:
 
 def container_labels(project: Project, service: Service, index: int) -> Dict[str, str]:
     labels = _project_labels(project)
-    config_hash = service.config_hash()
     labels.update(
         {
             LABEL_SERVICE: service.name,
             LABEL_INDEX: str(index),
-            LABEL_CONFIG_HASH: config_hash,
-            LABEL_CONFIG_HASH_V2: service.config_hash_v2(project),
+            LABEL_CONFIG_HASH: service.config_hash(project),
         }
     )
     return labels

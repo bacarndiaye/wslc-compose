@@ -16,7 +16,6 @@ import yaml
 
 from wslc_compose import (
     LABEL_CONFIG_HASH,
-    LABEL_CONFIG_HASH_V2,
     LABEL_INDEX,
     LABEL_SERVICE,
     __version__,
@@ -115,7 +114,6 @@ def _project_containers(project: Project, all_states: bool = False) -> List[dict
                 "service": labels.get(LABEL_SERVICE, ""),
                 "index": int(labels.get(LABEL_INDEX, "1") or 1),
                 "hash": labels.get(LABEL_CONFIG_HASH, ""),
-                "hash_v2": labels.get(LABEL_CONFIG_HASH_V2, ""),
                 "running": bool(state.get("Running")),
                 "created": _format_created(entry.get("CreatedAt") or data.get("Created") or ""),
                 "status": entry.get("Status") or state.get("Status", "unknown"),
@@ -247,16 +245,12 @@ def cmd_up(ns: argparse.Namespace) -> int:
             raise ComposeError(
                 f"{svc.name}: cannot scale a service with container_name set"
             )
-        desired_hash = svc.config_hash()
-        desired_hash_v2 = svc.config_hash_v2(project)
+        desired_hash = svc.config_hash(project)
         for index in range(1, replicas + 1):
             cname = project.container_name(svc, index)
             current = existing.pop(cname, None)
             if current is not None:
-                current_hash_v2 = current.get("hash_v2", "")
-                current_hash = current_hash_v2 or current["hash"]
-                desired = desired_hash_v2 if current_hash_v2 else desired_hash
-                fresh = current_hash == desired and not ns.force_recreate
+                fresh = current["hash"] == desired_hash and not ns.force_recreate
                 if fresh and current["running"]:
                     _info(f"Container {cname} is up-to-date")
                     continue

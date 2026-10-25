@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from wslc_compose import LABEL_CONFIG_FILES, LABEL_CONFIG_HASH_V2, LABEL_PROJECT
+from wslc_compose import LABEL_CONFIG_FILES, LABEL_CONFIG_HASH, LABEL_PROJECT
 from wslc_compose.flags import build_args, image_name, run_args
 from wslc_compose.loader import load_project
 from wslc_compose.model import BuildConfig, FileMount, FileResource, HealthCheck, Network, Project, Service, Volume, VolumeMount
@@ -58,17 +58,17 @@ def test_config_hash_is_versioned_and_order_independent(tmp_path):
     web.labels = dict(reversed(list(web.labels.items())))
     web.network_aliases = {name: list(reversed(aliases)) for name, aliases in web.network_aliases.items()}
 
-    assert original.startswith("v1:")
+    assert original.startswith("v2:")
     assert original == web.config_hash()
 
 
-def test_experimental_config_hash_v2_matches_shared_golden_vector():
+def test_config_hash_matches_shared_golden_vector():
     service = Service(
         name="web", image="fixture", stdin_open=True, gpus="all", tty=True, stop_timeout_seconds=90
     )
     service.healthcheck = HealthCheck(test=["CMD-SHELL", "true"], interval="30s", timeout="5s", start_period="10s", retries=3)
 
-    assert service.config_hash_v2() == (
+    assert service.config_hash() == (
         "v2:7761dc3ba3aec83fa3b3e25cad2dab47fd4dc3356f16d936db7e445f6acbbd29"
     )
 
@@ -125,38 +125,38 @@ def test_run_args_emit_structured_mount(tmp_path):
     )
 
 
-def test_experimental_hash_v2_matches_structured_mount_vector():
+def test_config_hash_matches_structured_mount_vector():
     service = Service(name="web", image="fixture", volumes=[
         VolumeMount("bind", "C:/data", "/data", True, ["propagation=rshared"], True)
     ])
 
-    assert service.config_hash_v2() == "v2:4aed1aa484bbbd21d5b9dd0bb844b5cd4b38cc8d61167714ad7a2b443f5df6a6"
+    assert service.config_hash() == "v2:4aed1aa484bbbd21d5b9dd0bb844b5cd4b38cc8d61167714ad7a2b443f5df6a6"
 
 
-def test_experimental_hash_v2_matches_internal_network_declaration_vector():
+def test_config_hash_matches_internal_network_declaration_vector():
     service = Service(name="web", image="fixture", networks=["demo_private"])
     project = Project(name="demo", directory=".", services={"web": service}, networks={
         "private": Network(key="private", name="demo_private", internal=True)
     })
 
-    assert service.config_hash_v2(project) == "v2:c3f312f032f286e3d0e3b9206d517d7554619ae1a7d7a319ffcae9005fd71295"
+    assert service.config_hash(project) == "v2:c3f312f032f286e3d0e3b9206d517d7554619ae1a7d7a319ffcae9005fd71295"
 
 
-def test_experimental_hash_v2_matches_volume_declaration_vector():
+def test_config_hash_matches_volume_declaration_vector():
     service = Service(name="web", image="fixture", volumes=[VolumeMount("volume", "demo_data", "/data")])
     project = Project(name="demo", directory=".", services={"web": service}, volumes={
         "data": Volume(key="data", name="demo_data", driver="guest", driver_opts={"size": "1G"}, labels={"purpose": "cache"})
     })
 
-    assert service.config_hash_v2(project) == "v2:ea8b1dc7e8795f36d6114622ecd7dee6129c864d9c469f23a06c55b35b201a2d"
+    assert service.config_hash(project) == "v2:ea8b1dc7e8795f36d6114622ecd7dee6129c864d9c469f23a06c55b35b201a2d"
 
 
-def test_experimental_hash_v2_matches_build_details_vector():
+def test_config_hash_matches_build_details_vector():
     service = Service(name="web", image="fixture", build=BuildConfig(
         context=".", dockerfile="Dockerfile.custom", args={"B": "2", "A": "1"}, target="release", pull=True, no_cache=True
     ))
 
-    assert service.config_hash_v2() == "v2:164d845a98d8c8ab7bde344740746eece3ae176962411708b951be1497a0b0a9"
+    assert service.config_hash() == "v2:164d845a98d8c8ab7bde344740746eece3ae176962411708b951be1497a0b0a9"
 
 
 def test_run_args_mount_file_backed_resources_readonly(tmp_path):
@@ -172,7 +172,7 @@ def test_run_args_mount_file_backed_resources_readonly(tmp_path):
     assert f"WIN({source}):/run/secrets/token:ro" in args
 
 
-def test_experimental_hash_v2_matches_file_resource_vector(tmp_path):
+def test_config_hash_matches_file_resource_vector(tmp_path):
     source = tmp_path / "secret.txt"
     source.write_text("secret")
     service = Service(name="web", image="fixture", secrets=[FileMount("token", "/run/secrets/token")])
@@ -180,7 +180,7 @@ def test_experimental_hash_v2_matches_file_resource_vector(tmp_path):
         "token": FileResource("token", str(source))
     })
 
-    assert service.config_hash_v2(project) == "v2:fc35d18446cec55bb53d049552b93c0976d76391234c74a8b89e1cdbbc602e3e"
+    assert service.config_hash(project) == "v2:fc35d18446cec55bb53d049552b93c0976d76391234c74a8b89e1cdbbc602e3e"
 
 
 @pytest.mark.parametrize("mode", ["host", "none", "container:shared"])
@@ -220,7 +220,7 @@ def test_run_args(tmp_path):
     assert args[args.index("--name") + 1] == "demo-web-1"
     assert f"{LABEL_PROJECT}=demo" in args
     assert f"{LABEL_CONFIG_FILES}={json.dumps([str(tmp_path / 'compose.yaml')], separators=(',', ':'))}" in args
-    assert any(arg.startswith(f"{LABEL_CONFIG_HASH_V2}=v2:") for arg in args)
+    assert any(arg.startswith(f"{LABEL_CONFIG_HASH}=v2:") for arg in args)
     assert "FOO=bar" in args
     assert "8088:80" in args
 

@@ -109,15 +109,8 @@ class Service:
     profiles: List[str] = field(default_factory=list)
     restart: Optional[str] = None  # accepted but not enforceable by wslc yet
 
-    def config_hash(self) -> str:
-        """Versioned hash of resolved runtime inputs for compatible Compose frontends."""
-        return self._config_hash("v1", include_v2_fields=False)
-
-    def config_hash_v2(self, project: Optional["Project"] = None) -> str:
-        """Experimental shared hash; do not publish until the v2 contract is complete."""
-        return self._config_hash("v2", include_v2_fields=True, project=project)
-
-    def _config_hash(self, version: str, include_v2_fields: bool, project: Optional["Project"] = None) -> str:
+    def config_hash(self, project: Optional["Project"] = None) -> str:
+        """Portable configuration identity for compatible Compose frontends."""
         payload = {
             "service": self.name,
             "image": self.image or "",
@@ -136,7 +129,7 @@ class Service:
                 (
                     {
                         "name": network,
-                        "aliases": sorted(set(self.network_aliases.get(network, []) + ([self.name] if include_v2_fields else []))),
+                        "aliases": sorted(set(self.network_aliases.get(network, []) + [self.name])),
                     }
                     for network in self.networks
                 ),
@@ -157,52 +150,51 @@ class Service:
             "shm_size": self.shm_size or "",
             "stop_signal": self.stop_signal or "",
         }
-        if include_v2_fields:
-            payload["stdin_open"] = self.stdin_open
-            payload["gpus_all"] = self.gpus == "all"
-            payload["tty"] = self.tty
-            payload["stop_timeout"] = self.stop_timeout_seconds
-            health = self.healthcheck
-            payload["healthcheck"] = None if health is None else {
-                "test": health.test,
-                "disabled": health.disabled,
-                "interval": health.interval,
-                "timeout": health.timeout,
-                "start_period": health.start_period,
-                "retries": health.retries,
-            }
-            payload["network_mode"] = self.network_mode
-            declarations = []
-            if project:
-                for network in sorted(project.networks.values(), key=lambda item: item.name):
-                    if network.name in self.networks:
-                        declarations.append({"name": network.name, "external": network.external,
-                                             "internal": network.internal})
-            payload["network_declarations"] = declarations
-            volume_sources = {mount.source for mount in self.volumes if mount.type == "volume" and mount.source}
-            payload["volume_declarations"] = [
-                {"name": volume.name, "external": volume.external, "driver": volume.driver or "",
-                 "driver_opts": dict(sorted(volume.driver_opts.items())), "labels": dict(sorted(volume.labels.items()))}
-                for volume in sorted(project.volumes.values(), key=lambda item: item.name)
-                if volume.name in volume_sources
-            ] if project else []
-            payload["build_details"] = None if self.build is None else {
-                "dockerfile": self.build.dockerfile or "Dockerfile",
-                "args": dict(sorted(self.build.args.items())), "target": self.build.target,
-                "pull": self.build.pull, "no_cache": self.build.no_cache,
-            }
-            def file_mounts(mounts, resources):
-                result = []
-                for mount in sorted(mounts, key=lambda item: (item.target, item.source)):
-                    resource = resources[mount.source]
-                    with open(resource.file, "rb") as handle:
-                        result.append({"source": mount.source, "target": mount.target,
-                                       "sha256": hashlib.sha256(handle.read()).hexdigest()})
-                return result
-            payload["secrets"] = file_mounts(self.secrets, project.secrets) if project else []
-            payload["configs"] = file_mounts(self.configs, project.configs) if project else []
+        payload["stdin_open"] = self.stdin_open
+        payload["gpus_all"] = self.gpus == "all"
+        payload["tty"] = self.tty
+        payload["stop_timeout"] = self.stop_timeout_seconds
+        health = self.healthcheck
+        payload["healthcheck"] = None if health is None else {
+            "test": health.test,
+            "disabled": health.disabled,
+            "interval": health.interval,
+            "timeout": health.timeout,
+            "start_period": health.start_period,
+            "retries": health.retries,
+        }
+        payload["network_mode"] = self.network_mode
+        declarations = []
+        if project:
+            for network in sorted(project.networks.values(), key=lambda item: item.name):
+                if network.name in self.networks:
+                    declarations.append({"name": network.name, "external": network.external,
+                                         "internal": network.internal})
+        payload["network_declarations"] = declarations
+        volume_sources = {mount.source for mount in self.volumes if mount.type == "volume" and mount.source}
+        payload["volume_declarations"] = [
+            {"name": volume.name, "external": volume.external, "driver": volume.driver or "",
+             "driver_opts": dict(sorted(volume.driver_opts.items())), "labels": dict(sorted(volume.labels.items()))}
+            for volume in sorted(project.volumes.values(), key=lambda item: item.name)
+            if volume.name in volume_sources
+        ] if project else []
+        payload["build_details"] = None if self.build is None else {
+            "dockerfile": self.build.dockerfile or "Dockerfile",
+            "args": dict(sorted(self.build.args.items())), "target": self.build.target,
+            "pull": self.build.pull, "no_cache": self.build.no_cache,
+        }
+        def file_mounts(mounts, resources):
+            result = []
+            for mount in sorted(mounts, key=lambda item: (item.target, item.source)):
+                resource = resources[mount.source]
+                with open(resource.file, "rb") as handle:
+                    result.append({"source": mount.source, "target": mount.target,
+                                   "sha256": hashlib.sha256(handle.read()).hexdigest()})
+            return result
+        payload["secrets"] = file_mounts(self.secrets, project.secrets) if project else []
+        payload["configs"] = file_mounts(self.configs, project.configs) if project else []
         blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-        return version + ":" + hashlib.sha256(blob.encode()).hexdigest()
+        return "v2:" + hashlib.sha256(blob.encode()).hexdigest()
 
 
 @dataclass
