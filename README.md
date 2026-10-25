@@ -253,7 +253,8 @@ Show the wslc-compose and wslc versions.
 | `volumes` — named volumes | `wslc volume create` + `-v name:/path` |
 | `volumes` — bind mounts (`./rel`, `/abs`, `~`, `E:\win\path`), `:ro` | `-v` with [path translation](#volumes-and-path-translation) |
 | `tmpfs` (top-level list or `type: tmpfs`) | `--tmpfs` |
-| `networks` incl. `aliases`, `external: true`, custom `name:` | `wslc network create`, `--network`, `--network-alias` |
+| Multiple `networks`, per-endpoint `aliases` / `ipv4_address`, `external: true`, custom `name:` | Native `create`, `network connect`, `start`; one-network services use `run` |
+| Network `driver`, `driver_opts`, `labels`, `internal`, IPv4 IPAM `subnet` / `gateway` / `ip_range` | `network create --driver --opt --internal --subnet --gateway --ip-range` |
 | `depends_on` (list & map) | topological start/creation order |
 | `deploy.replicas` | number of containers (see also `--scale`) |
 | `deploy.resources.limits.cpus` / `.memory`, `cpus`, `mem_limit` | `--cpus`, `-m` |
@@ -369,16 +370,36 @@ services on the next `up`.
   so `db:5432` style URLs from your Docker compose files work unchanged. (Verified
   against the preview: alias and name DNS both resolve.)
 - `external: true` networks are required to exist and are never created/removed.
-- `networks.<network>.ipv4_address` on the first network maps to `--ip` (validated
-  with WSLc 3.0.3.0). The network must have a suitable subnet; an existing external
-  bridge with explicit IPAM can be used. `up` checks the requested allocation and
-  the live address separately from the shared hash, recreating the container if
-  the address changes, is removed, or was not applied correctly. Multiple replicas
-  cannot share one static address. Static addresses on secondary networks are rejected.
+- Every declared network is attached. Multi-network services use **create → connect
+  secondary networks → verify → start** so the entrypoint sees every endpoint.
+  Single-network services keep the direct `run` path.
+- Each endpoint has independent aliases and an optional `ipv4_address`, mapped to
+  `--ip` on `create`/`run` or `network connect` (validated with WSLc 3.0.3.0).
+  `up` checks every endpoint's aliases, requested allocation and live IP. Missing
+  endpoints, alias/IP drift, a changed primary network or removal of a static IP
+  trigger recreation. Unchanged running or stopped containers are reused without
+  duplicate connections. Multiple replicas cannot share one static address.
+- Network declarations support `driver`, `driver_opts`, `labels`, `internal` and
+  the engine's IPv4 IPAM: **one subnet per network**, optional `gateway`, and
+  optional `ip_range` for dynamic allocations. Static IPs may be outside that
+  dynamic pool, but must be usable addresses in the subnet and differ from the gateway.
+  Existing networks are inspected before touching workloads; conflicting requested
+  settings cause an error rather than silently reusing or rewriting the network.
+- WSLC 3.0.3.0 does **not** expose the complete Compose IPAM specification. Multiple
+  subnets in one network, IPv6, custom IPAM drivers/options, `aux_addresses`, and
+  unsupported endpoint controls such as `priority`/`gw_priority` are rejected explicitly.
+  In the engine smoke, repeating `--subnet` retained only the last value, and an
+  IPv6 declaration still reported `EnableIPv6=false`.
 - Static endpoint IPs remain outside `com.wslc-compose.config-hash=v2:...`;
-  this support does not change the shared fingerprint format or projection.
-- ⚠️ wslc accepts a **single `--network` per container**. If a service lists several
-  networks, the first one is used (documented preview limitation).
+  new IPAM creation details also remain outside its existing projection. Network
+  resources and endpoint state are verified separately; no additional shared hash is used.
+- Failed multi-network creation removes only the partial container whose identity
+  and operation label were verified. It does not delete existing workloads or named
+  volumes. If ownership/inspect cannot be established, the container is retained for
+  inspection; a cleanup failure is reported. Created network/volume resources remain
+  available for retry or explicit `down`. External and unverified networks are preserved.
+- See [`examples/multi-network-ipam/compose.yaml`](examples/multi-network-ipam/compose.yaml)
+  for a frontend/backend example with static addresses and a dynamic IP pool.
 
 ## Volumes and path translation
 
@@ -402,7 +423,8 @@ services on the next `up`.
   is manual: `wslc compose up -d`).
 - **`healthcheck`** / `depends_on: condition: service_healthy` — not supported;
   conditions fall back to *service_started*.
-- **One network per container** (see [Networking](#networking)).
+- **One IPv4 IPAM subnet per network**, without IPv6/custom IPAM or auxiliary
+  address reservations (see [Networking](#networking)). Multiple networks per container are supported.
 - **Session mount limit**: the current preview caps mounted volumes at ~15 per WSL
   session — error `Too many volumes have been mounted (limit: 15)` / `0x8007000e`.
   This also affects `wslc build` (the build context is mounted). Microsoft says it

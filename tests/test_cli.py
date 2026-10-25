@@ -153,6 +153,7 @@ def test_project_containers_accepts_wslc_list_field_names(monkeypatch):
             "status": "Up 6 seconds",
             "ports": "127.0.0.1:1521->1521/tcp",
             "networks": None,
+            "network_mode": None,
         }
     ]
     assert cli._format_ports(containers[0]["ports"]) == "127.0.0.1:1521->1521/tcp"
@@ -185,7 +186,7 @@ def test_up_reconciles_ipv4_even_when_shared_hash_matches(
     project = Project(name="demo", directory=".", services={"web": service})
     current = {"name": "demo-web-1", "service": "web", "index": 1,
                "hash": service.config_hash(project), "running": running,
-               "networks": {"front": {"IPAddress": actual,
+               "networks": {"front": {"IPAddress": actual, "Aliases": ["web"],
                    "IPAMConfig": {"IPv4Address": requested} if requested else None}}}
     calls = []
     monkeypatch.setattr(cli, "_load", lambda _: project)
@@ -194,7 +195,7 @@ def test_up_reconciles_ipv4_even_when_shared_hash_matches(
     monkeypatch.setattr(cli.engine, "run_retried", lambda args, **_: calls.append(args))
     monkeypatch.setattr(cli.engine, "inspect", lambda _: {
         "State": {"Running": True}, "NetworkSettings": {"Networks": {"front": {
-            "IPAddress": desired, "IPAMConfig": {"IPv4Address": desired}}}}})
+            "IPAddress": desired, "Aliases": ["web"], "IPAMConfig": {"IPv4Address": desired}}}}})
     ns = cli.build_parser().parse_args(["up", "-d"])
 
     assert cli.cmd_up(ns) == 0

@@ -168,6 +168,16 @@ def test_ensure_network_applies_internal_flag(monkeypatch):
     assert calls == [(["network", "create", "--internal", "demo_private"], False)]
 
 
+def test_ensure_network_applies_driver_options_and_ipam(monkeypatch):
+    calls = []
+    monkeypatch.setattr(engine, "network_names", lambda: [])
+    monkeypatch.setattr(engine, "run", lambda args, **_: calls.append(args))
+    assert engine.ensure_network("front", driver="bridge", driver_opts={"mtu": "1400"},
+                                 subnet="10.1.0.0/24", gateway="10.1.0.1", ip_range="10.1.0.128/25")
+    assert calls == [["network", "create", "--driver", "bridge", "--opt", "mtu=1400",
+                      "--subnet", "10.1.0.0/24", "--gateway", "10.1.0.1", "--ip-range", "10.1.0.128/25", "front"]]
+
+
 def test_ensure_volume_applies_resource_labels(monkeypatch):
     calls = []
     monkeypatch.setattr(engine, "volume_names", lambda: [])

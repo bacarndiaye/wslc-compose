@@ -238,7 +238,9 @@ def volume_names() -> List[str]:
 
 
 def ensure_network(name: str, labels: Optional[Dict[str, str]] = None, internal: bool = False,
-                   dry_run: bool = False) -> bool:
+                   dry_run: bool = False, *, driver: Optional[str] = None,
+                   driver_opts: Optional[Dict[str, str]] = None, subnet: Optional[str] = None,
+                   gateway: Optional[str] = None, ip_range: Optional[str] = None) -> bool:
     if name in network_names():
         return False
     args = ["network", "create"]
@@ -246,6 +248,13 @@ def ensure_network(name: str, labels: Optional[Dict[str, str]] = None, internal:
         args += ["-l", f"{key}={value}"]
     if internal:
         args.append("--internal")
+    if driver:
+        args += ["--driver", driver]
+    for key, value in (driver_opts or {}).items():
+        args += ["--opt", f"{key}={value}"]
+    for flag, value in (("--subnet", subnet), ("--gateway", gateway), ("--ip-range", ip_range)):
+        if value:
+            args += [flag, value]
     run(args + [name], dry_run=dry_run)
     return True
 

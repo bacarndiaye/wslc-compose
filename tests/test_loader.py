@@ -108,7 +108,7 @@ def test_invalid_static_ipv4_is_rejected(tmp_path, address):
         load_project(str(path))
 
 
-def test_static_ipv4_on_unattached_secondary_network_is_rejected(tmp_path):
+def test_static_ipv4_is_retained_on_secondary_network(tmp_path):
     path = tmp_path / "compose.yaml"
     path.write_text("""
 services:
@@ -122,7 +122,92 @@ networks:
   front: {}
   back: {}
 """)
-    with pytest.raises(ComposeError, match="only on the first network"):
+    service = load_project(str(path)).services["web"]
+    assert service.network_ipv4_addresses == {service.networks[1]: "10.0.0.51"}
+
+
+def test_network_ipam_and_creation_metadata_are_normalized(tmp_path):
+    path = tmp_path / "compose.yaml"
+    path.write_text("""
+name: demo
+services:
+  web:
+    image: fixture
+    networks:
+      front: {ipv4_address: 10.1.0.10, aliases: [www]}
+      back: {ipv4_address: 10.2.0.20, aliases: [private]}
+networks:
+  front:
+    name: custom-front
+    driver: bridge
+    driver_opts: {mtu: '1400'}
+    labels: {purpose: web}
+    ipam:
+      driver: default
+      config:
+        - subnet: 10.1.0.0/24
+          gateway: 10.1.0.1
+          ip_range: 10.1.0.128/25
+  back:
+    internal: true
+    ipam:
+      config: [{subnet: 10.2.0.0/24}]
+""")
+    project = load_project(str(path))
+    front = project.networks["front"]
+    assert (front.name, front.driver, front.subnet, front.gateway, front.ip_range) == (
+        "custom-front", "bridge", "10.1.0.0/24", "10.1.0.1", "10.1.0.128/25")
+    assert front.driver_opts == {"mtu": "1400"} and front.labels == {"purpose": "web"}
+    assert project.networks["back"].internal
+    assert project.services["web"].network_ipv4_addresses == {
+        "custom-front": "10.1.0.10", "demo_back": "10.2.0.20"}
+    assert project.services["web"].network_aliases == {"custom-front": ["www"], "demo_back": ["private"]}
+
+
+@pytest.mark.parametrize("config", [
+    "{ipam: {config: [{subnet: 10.1.0.0/24}, {subnet: 10.2.0.0/24}]}}",
+    "{ipam: {config: [{subnet: 'fd00::/64'}]}}",
+    "{enable_ipv6: true}", "{enable_ipv4: false}", "{attachable: true}",
+    "{ipam: {driver: custom}}", "{ipam: {options: {foo: bar}}}",
+    "{ipam: {config: [{subnet: 10.1.0.0/24, aux_addresses: {reserved: 10.1.0.5}}]}}",
+    "{ipam: {config: [{subnet: 10.1.0.5/24}]}}",
+    "{ipam: {config: [{subnet: 10.1.0.0/24, gateway: 10.2.0.1}]}}",
+    "{ipam: {config: [{subnet: 10.1.0.0/24, gateway: 10.1.0.255}]}}",
+    "{ipam: {config: [{subnet: 10.1.0.0/24, ip_range: 10.2.0.0/25}]}}",
+    "{ipam: {config: [{gateway: 10.1.0.1}]}}",
+    "{ipam: []}", "{ipam: {config: {}}}", "{ipam: {config: [null]}}",
+    "{unknown: true}",
+])
+def test_ipam_that_cannot_be_applied_is_rejected_instead_of_dropped(tmp_path, config):
+    path = tmp_path / "compose.yaml"
+    path.write_text(f"services:\n  web:\n    image: fixture\n    networks: [front]\nnetworks:\n  front: {config}\n")
+    with pytest.raises(ComposeError, match="networks.front"):
+        load_project(str(path))
+
+
+@pytest.mark.parametrize("address", ["10.2.0.10", "10.1.0.0", "10.1.0.1", "10.1.0.255"])
+def test_static_address_must_be_usable_in_declared_subnet(tmp_path, address):
+    path = tmp_path / "compose.yaml"
+    path.write_text(f"""
+services:
+  web:
+    image: fixture
+    networks:
+      front: {{ipv4_address: {address}}}
+networks:
+  front:
+    ipam:
+      config: [{{subnet: 10.1.0.0/24, gateway: 10.1.0.1}}]
+""")
+    with pytest.raises(ComposeError, match="not usable"):
+        load_project(str(path))
+
+
+@pytest.mark.parametrize("setting", ["ipv6_address: 'fd00::2'", "priority: 100", "gw_priority: 1", "interface_name: eth1"])
+def test_unsupported_endpoint_options_are_not_silently_discarded(tmp_path, setting):
+    path = tmp_path / "compose.yaml"
+    path.write_text(f"services:\n  web:\n    image: fixture\n    networks:\n      front: {{{setting}}}\nnetworks:\n  front: {{}}")
+    with pytest.raises(ComposeError, match="unsupported endpoint"):
         load_project(str(path))
 
 

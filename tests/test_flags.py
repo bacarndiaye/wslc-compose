@@ -6,7 +6,6 @@ from wslc_compose import LABEL_CONFIG_FILES, LABEL_CONFIG_HASH, LABEL_PROJECT
 from wslc_compose.flags import build_args, image_name, run_args
 from wslc_compose.loader import load_project
 from wslc_compose.model import BuildConfig, FileMount, FileResource, HealthCheck, Network, Project, Service, Volume, VolumeMount
-from wslc_compose.model import VolumeMount
 
 COMPOSE = """
 name: demo
@@ -71,6 +70,16 @@ def test_config_hash_matches_shared_golden_vector():
     assert service.config_hash() == (
         "v2:7761dc3ba3aec83fa3b3e25cad2dab47fd4dc3356f16d936db7e445f6acbbd29"
     )
+
+
+def test_config_hash_matches_shared_shell_operator_vector():
+    service = Service(name="web", image="fixture", command=["sh", "-c", "echo a && echo b"])
+    assert service.config_hash() == "v2:b4690ac86a52bb4afac721d21138fd2fc10e9474ac4023dc85faee2a50615bc9"
+
+
+def test_config_hash_matches_shared_ascii_escaping_and_unicode_key_order():
+    service = Service(name="web", image="fixture", labels={"\ue000": "<>&'\"é😀\u007f\n", "\U00010000": "astral"})
+    assert service.config_hash() == "v2:f89618003f02eb194df1cf76766b87371842c116134f5c31a376ee969fe0f0f4"
 
 
 def test_run_args_include_stdin_and_gpu_flags(tmp_path):
@@ -153,6 +162,11 @@ def test_config_hash_matches_internal_network_declaration_vector():
         "private": Network(key="private", name="demo_private", internal=True)
     })
 
+    assert service.config_hash(project) == "v2:c3f312f032f286e3d0e3b9206d517d7554619ae1a7d7a319ffcae9005fd71295"
+
+    network = project.networks["private"]
+    network.subnet, network.gateway, network.ip_range = "10.1.0.0/24", "10.1.0.1", "10.1.0.128/25"
+    network.driver, network.driver_opts, network.labels = "bridge", {"mtu": "1400"}, {"purpose": "test"}
     assert service.config_hash(project) == "v2:c3f312f032f286e3d0e3b9206d517d7554619ae1a7d7a319ffcae9005fd71295"
 
 

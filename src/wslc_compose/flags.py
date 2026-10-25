@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from typing import Callable, List, Optional
 
+from wslc_compose import LABEL_CREATE_OPERATION
 from wslc_compose.metadata import container_labels
 from wslc_compose.model import Project, Service
 
@@ -15,11 +16,14 @@ def run_args(
     index: int = 1,
     detach: bool = True,
     path_mapper: Optional[Callable[[str], str]] = None,
+    *,
+    create: bool = False,
+    operation: Optional[str] = None,
 ) -> List[str]:
-    """Arguments for `wslc run` creating one container of a service."""
+    """Arguments for `wslc run`, or native `create` before attaching secondary networks."""
     mapper = path_mapper or (lambda p: p)
-    args: List[str] = ["run"]
-    if detach:
+    args: List[str] = ["create" if create else "run"]
+    if detach and not create:
         args.append("-d")
 
     args += ["--name", project.container_name(service, index)]
@@ -27,6 +31,8 @@ def run_args(
         args += ["-l", f"{key}={value}"]
     for key, value in container_labels(project, service, index).items():
         args += ["-l", f"{key}={value}"]
+    if operation:
+        args += ["-l", f"{LABEL_CREATE_OPERATION}={operation}"]
 
     for env_file in service.env_files:
         args += ["--env-file", mapper(env_file)]
@@ -139,6 +145,17 @@ def run_args(
     args += entrypoint[1:]
     args += service.command or []
     return args
+
+
+def network_connect_args(service: Service, network: str, container: str) -> List[str]:
+    """Arguments scoped to exactly one secondary endpoint."""
+    args = ["network", "connect"]
+    address = service.network_ipv4_addresses.get(network)
+    if address:
+        args += ["--ip", address]
+    for alias in sorted(set(service.network_aliases.get(network, []) + [service.name])):
+        args += ["--network-alias", alias]
+    return args + [network, container]
 
 
 def build_args(

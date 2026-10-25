@@ -205,6 +205,12 @@ class Network:
     name: str  # actual wslc network name
     external: bool = False
     internal: bool = False
+    driver: Optional[str] = None
+    driver_opts: Dict[str, str] = field(default_factory=dict)
+    labels: Dict[str, str] = field(default_factory=dict)
+    subnet: Optional[str] = None
+    gateway: Optional[str] = None
+    ip_range: Optional[str] = None
 
 
 @dataclass

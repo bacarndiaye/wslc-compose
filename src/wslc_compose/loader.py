@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from ipaddress import IPv4Address
+from ipaddress import IPv4Address, IPv4Network
 import re
 import shlex
 from typing import Dict, List, Optional, Tuple
@@ -336,6 +336,59 @@ def _parse_file_mounts(value, project_dir: str, default_target: str):
     return mounts
 
 
+def _parse_network(key: str, cfg, project_name: str) -> Network:
+    cfg = {} if cfg is None else cfg
+    if not isinstance(cfg, dict):
+        raise ComposeError(f"networks.{key}: expected mapping")
+    external = bool(cfg.get("external", False))
+    name = cfg.get("name") or (key if external else f"{project_name}_{key}")
+    network = Network(key=key, name=str(name), external=external,
+                      internal=bool(cfg.get("internal", False)), driver=cfg.get("driver"),
+                      driver_opts=_as_mapping(cfg.get("driver_opts"), "network driver_opts"),
+                      labels=_as_mapping(cfg.get("labels"), "network labels"))
+    for option in cfg:
+        if option not in {"name", "external", "internal", "driver", "driver_opts", "labels",
+                          "ipam", "enable_ipv4", "enable_ipv6", "attachable"} and not str(option).startswith("x-"):
+            raise ComposeError(f"networks.{key}: unsupported setting {option!r}")
+    if cfg.get("enable_ipv6") or cfg.get("enable_ipv4") is False or cfg.get("attachable"):
+        raise ComposeError(f"networks.{key}: WSLC supports IPv4 networks without attachable mode")
+    ipam = {} if cfg.get("ipam") is None else cfg["ipam"]
+    if not isinstance(ipam, dict):
+        raise ComposeError(f"networks.{key}.ipam: expected mapping")
+    if ipam.get("driver") not in (None, "default") or ipam.get("options"):
+        raise ComposeError(f"networks.{key}.ipam: custom IPAM drivers/options are not supported by WSLC")
+    if any(option not in {"driver", "options", "config"} for option in ipam):
+        raise ComposeError(f"networks.{key}.ipam: unsupported setting")
+    configs = [] if ipam.get("config") is None else ipam["config"]
+    if not isinstance(configs, list) or len(configs) > 1:
+        raise ComposeError(f"networks.{key}.ipam.config: WSLC supports one IPv4 subnet per network")
+    if not configs:
+        return network
+    config = configs[0]
+    if not isinstance(config, dict):
+        raise ComposeError(f"networks.{key}.ipam.config: expected mapping")
+    if any(option not in {"subnet", "gateway", "ip_range", "aux_addresses"} for option in config) or config.get("aux_addresses"):
+        raise ComposeError(f"networks.{key}.ipam.config: unsupported setting (including aux_addresses)")
+    try:
+        subnet = IPv4Network(str(config["subnet"]).strip())
+        if subnet.num_addresses < 4:
+            raise ValueError("subnet needs network, gateway and broadcast addresses")
+        network.subnet = str(subnet)
+        if config.get("gateway") is not None:
+            gateway = IPv4Address(str(config["gateway"]).strip())
+            if gateway not in subnet or gateway in (subnet.network_address, subnet.broadcast_address):
+                raise ValueError("gateway must be a usable address inside the subnet")
+            network.gateway = str(gateway)
+        if config.get("ip_range") is not None:
+            ip_range = IPv4Network(str(config["ip_range"]).strip())
+            if not ip_range.subnet_of(subnet):
+                raise ValueError("ip_range must be inside the subnet")
+            network.ip_range = str(ip_range)
+    except (KeyError, ValueError) as exc:
+        raise ComposeError(f"networks.{key}.ipam.config: invalid IPv4 subnet/gateway/ip_range: {exc}") from exc
+    return network
+
+
 def load_project(
     compose_file: str,
     project_name: Optional[str] = None,
@@ -369,12 +422,10 @@ def load_project(
 
     # --- top level networks & volumes -------------------------------------
     raw_networks = raw.get("networks") or {}
+    if not isinstance(raw_networks, dict):
+        raise ComposeError("networks: expected mapping")
     for key, cfg in raw_networks.items():
-        cfg = cfg or {}
-        external = bool(cfg.get("external", False))
-        net_name = cfg.get("name") or (key if external else f"{name}_{key}")
-        project.networks[key] = Network(key=key, name=net_name, external=external,
-                                        internal=bool(cfg.get("internal", False)))
+        project.networks[key] = _parse_network(str(key), cfg, name)
 
     raw_volumes = raw.get("volumes") or {}
     for key, cfg in raw_volumes.items():
@@ -438,6 +489,10 @@ def load_project(
             keys = [str(k) for k in raw_svc_networks]
             aliases = {}
         else:
+            if not isinstance(raw_svc_networks, dict) or any(
+                value is not None and not isinstance(value, dict) for value in raw_svc_networks.values()
+            ):
+                raise ComposeError(f"service {svc_name!r}: networks must be a list or endpoint mapping")
             keys = [str(k) for k in raw_svc_networks]
             aliases = {
                 str(k): _as_list((v or {}).get("aliases"))
@@ -457,6 +512,13 @@ def load_project(
             svc.networks.append(net.name)
             svc.network_aliases[net.name] = aliases.get(key, [])
             endpoint = raw_svc_networks.get(key) if isinstance(raw_svc_networks, dict) else None
+            if endpoint is not None and not isinstance(endpoint, dict):
+                raise ComposeError(f"service {svc_name!r}, network {key!r}: expected mapping")
+            if isinstance(endpoint, dict) and any(
+                option not in {"aliases", "ipv4_address"} and not str(option).startswith("x-")
+                for option in endpoint
+            ):
+                raise ComposeError(f"service {svc_name!r}, network {key!r}: unsupported endpoint setting")
             if isinstance(endpoint, dict) and "ipv4_address" in endpoint:
                 try:
                     address = str(IPv4Address(str(endpoint["ipv4_address"]).strip()))
@@ -464,11 +526,14 @@ def load_project(
                     raise ComposeError(
                         f"service {svc_name!r}, network {key!r}: invalid ipv4_address"
                     ) from exc
-                if net.name != svc.networks[0]:
-                    raise ComposeError(
-                        f"service {svc_name!r}: ipv4_address is supported only on the first network"
-                    )
+                if net.subnet:
+                    subnet = IPv4Network(net.subnet)
+                    if (IPv4Address(address) not in subnet or address == net.gateway or
+                            IPv4Address(address) in (subnet.network_address, subnet.broadcast_address)):
+                        raise ComposeError(f"service {svc_name!r}, network {key!r}: ipv4_address is not usable in its subnet")
                 svc.network_ipv4_addresses[net.name] = address
+        if len(svc.networks) != len(set(svc.networks)):
+            raise ComposeError(f"service {svc_name!r}: network declarations resolve to the same runtime name")
 
         # named volumes must be declared
         for mount in svc.volumes:

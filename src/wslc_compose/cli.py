@@ -17,10 +17,11 @@ import yaml
 from wslc_compose import (
     LABEL_CONFIG_HASH,
     LABEL_INDEX,
+    LABEL_PROJECT,
     LABEL_SERVICE,
     __version__,
 )
-from wslc_compose import engine, flags
+from wslc_compose import engine, flags, networking
 from wslc_compose.engine import WslcError
 from wslc_compose.loader import ComposeError, find_compose_file, load_project
 from wslc_compose.metadata import resource_labels
@@ -119,6 +120,7 @@ def _project_containers(project: Project, all_states: bool = False) -> List[dict
                 "status": entry.get("Status") or state.get("Status", "unknown"),
                 "ports": entry.get("Ports") or [],
                 "networks": (data.get("NetworkSettings") or {}).get("Networks"),
+                "network_mode": (data.get("HostConfig") or {}).get("NetworkMode"),
             }
         )
     return enriched
@@ -179,36 +181,6 @@ def _print_table(rows: List[List[str]], headers: List[str]) -> None:
 # --- commands ----------------------------------------------------------------
 
 
-def _network_ipv4_matches(service: Service, current: dict) -> bool:
-    """Compare requested allocation and live IP separately from the portable hash."""
-    if service.network_mode or not service.networks:
-        return True
-    network = service.networks[0]
-    desired = service.network_ipv4_addresses.get(network)
-    networks = current.get("networks")
-    if not isinstance(networks, dict):
-        if desired:
-            raise WslcError(f"cannot verify IPv4 settings for {current['name']!r}")
-        return True
-    endpoint = networks.get(network) or {}
-    requested = (endpoint.get("IPAMConfig") or {}).get("IPv4Address") or None
-    if desired != requested:
-        return False
-    return not desired or not current["running"] or endpoint.get("IPAddress") == desired
-
-
-def _verify_network_ipv4(service: Service, name: str, dry_run: bool) -> None:
-    if dry_run or not service.network_ipv4_addresses:
-        return
-    data = engine.inspect(name)
-    if not data or not _network_ipv4_matches(service, {
-        "name": name,
-        "running": bool((data.get("State") or {}).get("Running")),
-        "networks": (data.get("NetworkSettings") or {}).get("Networks"),
-    }):
-        raise WslcError(f"container {name!r} did not apply the requested static IPv4 address")
-
-
 def cmd_up(ns: argparse.Namespace) -> int:
     project = _load(ns)
     services = _select_services(project, ns.services, ns.profile)
@@ -223,24 +195,40 @@ def cmd_up(ns: argparse.Namespace) -> int:
             raise ComposeError(f"invalid --scale value: {spec!r} (expected service=N)")
         scale[name] = int(count)
 
+    static_addresses = set()
     for svc in services:
         if svc.network_ipv4_addresses and scale.get(svc.name, svc.replicas) > 1:
             raise ComposeError(f"{svc.name}: multiple replicas cannot share a static IPv4 address")
+        if scale.get(svc.name, svc.replicas) > 0:
+            for endpoint in svc.network_ipv4_addresses.items():
+                if endpoint in static_addresses:
+                    raise ComposeError(f"{svc.name}: another selected service requests the same static IPv4 address")
+                static_addresses.add(endpoint)
 
     needed_networks = {n for svc in services for n in svc.networks}
+    network_states = {}
     for net in project.networks.values():
         if net.name not in needed_networks:
             continue
         if net.external:
             if net.name not in engine.network_names():
                 raise ComposeError(f"external network {net.name!r} not found")
-        elif engine.ensure_network(
-            net.name,
-            labels=resource_labels(project, "network", net.key, net.name),
-            internal=net.internal,
-            dry_run=ns.dry_run,
-        ):
-            _info(f"Network {net.name} created")
+            network_states[net.name] = networking.verify_network(net)
+        else:
+            created = engine.ensure_network(
+                net.name,
+                labels={**net.labels, **resource_labels(project, "network", net.key, net.name)},
+                internal=net.internal,
+                dry_run=ns.dry_run,
+                driver=net.driver, driver_opts=net.driver_opts, subnet=net.subnet,
+                gateway=net.gateway, ip_range=net.ip_range,
+            )
+            if created:
+                _info(f"Network {net.name} created")
+            if not (created and ns.dry_run):
+                network_states[net.name] = networking.verify_network(net)
+    for svc in services:
+        networking.validate_static_addresses(svc, network_states)
 
     needed_volumes = {
         m.source for svc in services for m in svc.volumes if m.type == "volume"
@@ -286,14 +274,14 @@ def cmd_up(ns: argparse.Namespace) -> int:
             current = existing.pop(cname, None)
             if current is not None:
                 fresh = (current["hash"] == desired_hash and not ns.force_recreate
-                         and _network_ipv4_matches(svc, current))
+                         and networking.configuration_matches(svc, current))
                 if fresh and current["running"]:
                     _info(f"Container {cname} is up-to-date")
                     continue
                 if fresh and not current["running"]:
                     _info(f"Starting {cname} ...")
                     engine.run_retried(["start", cname], dry_run=ns.dry_run)
-                    _verify_network_ipv4(svc, cname, ns.dry_run)
+                    networking.verify_container(svc, cname, ns.dry_run)
                     _apply_extra_hosts(cname, svc.extra_hosts, ns.dry_run)
                     started.append(cname)
                     continue
@@ -305,13 +293,16 @@ def cmd_up(ns: argparse.Namespace) -> int:
                 engine.run(["remove", "-f", cname], capture=True, dry_run=ns.dry_run)
             else:
                 _info(f"Creating {cname} ...")
-            engine.run(
-                flags.run_args(
-                    project, svc, index, detach=True, path_mapper=engine.to_host_path
-                ),
-                dry_run=ns.dry_run,
-            )
-            _verify_network_ipv4(svc, cname, ns.dry_run)
+            if len(svc.networks) > 1 and not svc.network_mode:
+                networking.create_and_start(project, svc, index, ns.dry_run)
+            else:
+                engine.run(
+                    flags.run_args(
+                        project, svc, index, detach=True, path_mapper=engine.to_host_path
+                    ),
+                    dry_run=ns.dry_run,
+                )
+                networking.verify_container(svc, cname, ns.dry_run)
             _apply_extra_hosts(cname, svc.extra_hosts, ns.dry_run)
             started.append(cname)
 
@@ -343,8 +334,12 @@ def cmd_down(ns: argparse.Namespace) -> int:
     existing_networks = engine.network_names()
     for net in project.networks.values():
         if not net.external and net.name in existing_networks:
-            _info(f"Removing network {net.name}")
             try:
+                actual = networking.inspect_network(net.name)
+                if (actual.get("Labels") or {}).get(LABEL_PROJECT) != project.name:
+                    _err(f"warning: preserving network {net.name} (project ownership is unverified)")
+                    continue
+                _info(f"Removing network {net.name}")
                 engine.run(["network", "remove", net.name], capture=True, dry_run=ns.dry_run)
             except WslcError:
                 _err(f"warning: could not remove network {net.name} (still in use?)")
