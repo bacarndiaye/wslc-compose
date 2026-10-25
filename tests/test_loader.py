@@ -92,6 +92,40 @@ def test_network_aliases(project):
     assert web.network_aliases["demo_front"] == ["www"]
 
 
+def test_static_ipv4_resolves_network_name_and_preserves_aliases(tmp_path):
+    path = tmp_path / "compose.yaml"
+    path.write_text(COMPOSE.replace("aliases: [www]", "aliases: [www]\n        ipv4_address: ' 10.0.0.51 '"))
+    service = load_project(str(path)).services["web"]
+    assert service.network_ipv4_addresses == {"demo_front": "10.0.0.51"}
+    assert service.network_aliases == {"demo_front": ["www"]}
+
+
+@pytest.mark.parametrize("address", ["not-an-ip", "::1", "10.0.0.2/24", "999.0.0.1", "", "null"])
+def test_invalid_static_ipv4_is_rejected(tmp_path, address):
+    path = tmp_path / "compose.yaml"
+    path.write_text(COMPOSE.replace("aliases: [www]", f"aliases: [www]\n        ipv4_address: '{address}'"))
+    with pytest.raises(ComposeError, match="invalid ipv4_address"):
+        load_project(str(path))
+
+
+def test_static_ipv4_on_unattached_secondary_network_is_rejected(tmp_path):
+    path = tmp_path / "compose.yaml"
+    path.write_text("""
+services:
+  web:
+    image: fixture
+    networks:
+      front: {}
+      back:
+        ipv4_address: 10.0.0.51
+networks:
+  front: {}
+  back: {}
+""")
+    with pytest.raises(ComposeError, match="only on the first network"):
+        load_project(str(path))
+
+
 def test_dependency_order(project):
     order = [s.name for s in project.sorted_services()]
     assert order.index("app") < order.index("web")

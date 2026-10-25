@@ -369,6 +369,14 @@ services on the next `up`.
   so `db:5432` style URLs from your Docker compose files work unchanged. (Verified
   against the preview: alias and name DNS both resolve.)
 - `external: true` networks are required to exist and are never created/removed.
+- `networks.<network>.ipv4_address` on the first network maps to `--ip` (validated
+  with WSLc 3.0.3.0). The network must have a suitable subnet; an existing external
+  bridge with explicit IPAM can be used. `up` checks the requested allocation and
+  the live address separately from the shared hash, recreating the container if
+  the address changes, is removed, or was not applied correctly. Multiple replicas
+  cannot share one static address. Static addresses on secondary networks are rejected.
+- Static endpoint IPs remain outside `com.wslc-compose.config-hash=v2:...`;
+  this support does not change the shared fingerprint format or projection.
 - ⚠️ wslc accepts a **single `--network` per container**. If a service lists several
   networks, the first one is used (documented preview limitation).
 

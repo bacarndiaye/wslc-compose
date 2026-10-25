@@ -82,6 +82,8 @@ class Service:
     tmpfs: List[str] = field(default_factory=list)
     networks: List[str] = field(default_factory=list)  # project-resolved network names
     network_aliases: Dict[str, List[str]] = field(default_factory=dict)
+    # Endpoint addresses are reconciled against inspect, outside the shared v2 hash.
+    network_ipv4_addresses: Dict[str, str] = field(default_factory=dict)
     depends_on: List[str] = field(default_factory=list)
     hostname: Optional[str] = None
     domainname: Optional[str] = None

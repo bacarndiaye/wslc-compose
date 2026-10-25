@@ -89,6 +89,20 @@ def test_run_args_include_stdin_and_gpu_flags(tmp_path):
     assert args[args.index("--stop-timeout") + 1] == "90"
 
 
+def test_static_ipv4_is_emitted_but_stays_outside_shared_hash(tmp_path):
+    project = make_project(tmp_path)
+    service = project.services["web"]
+    original_hash = service.config_hash(project)
+    service.network_ipv4_addresses["demo_front"] = "10.0.0.51"
+    args = run_args(project, service)
+    assert args[args.index("--ip") + 1] == "10.0.0.51"
+    assert service.config_hash(project) == original_hash
+    service.network_ipv4_addresses["demo_front"] = "10.0.0.52"
+    assert service.config_hash(project) == original_hash
+    service.network_mode = "none"
+    assert "--ip" not in run_args(project, service)
+
+
 def test_run_args_include_healthcheck_flags(tmp_path):
     project = make_project(tmp_path)
     service = project.services["web"]

@@ -118,6 +118,7 @@ def _project_containers(project: Project, all_states: bool = False) -> List[dict
                 "created": _format_created(entry.get("CreatedAt") or data.get("Created") or ""),
                 "status": entry.get("Status") or state.get("Status", "unknown"),
                 "ports": entry.get("Ports") or [],
+                "networks": (data.get("NetworkSettings") or {}).get("Networks"),
             }
         )
     return enriched
@@ -178,6 +179,36 @@ def _print_table(rows: List[List[str]], headers: List[str]) -> None:
 # --- commands ----------------------------------------------------------------
 
 
+def _network_ipv4_matches(service: Service, current: dict) -> bool:
+    """Compare requested allocation and live IP separately from the portable hash."""
+    if service.network_mode or not service.networks:
+        return True
+    network = service.networks[0]
+    desired = service.network_ipv4_addresses.get(network)
+    networks = current.get("networks")
+    if not isinstance(networks, dict):
+        if desired:
+            raise WslcError(f"cannot verify IPv4 settings for {current['name']!r}")
+        return True
+    endpoint = networks.get(network) or {}
+    requested = (endpoint.get("IPAMConfig") or {}).get("IPv4Address") or None
+    if desired != requested:
+        return False
+    return not desired or not current["running"] or endpoint.get("IPAddress") == desired
+
+
+def _verify_network_ipv4(service: Service, name: str, dry_run: bool) -> None:
+    if dry_run or not service.network_ipv4_addresses:
+        return
+    data = engine.inspect(name)
+    if not data or not _network_ipv4_matches(service, {
+        "name": name,
+        "running": bool((data.get("State") or {}).get("Running")),
+        "networks": (data.get("NetworkSettings") or {}).get("Networks"),
+    }):
+        raise WslcError(f"container {name!r} did not apply the requested static IPv4 address")
+
+
 def cmd_up(ns: argparse.Namespace) -> int:
     project = _load(ns)
     services = _select_services(project, ns.services, ns.profile)
@@ -191,6 +222,10 @@ def cmd_up(ns: argparse.Namespace) -> int:
         if not count.isdigit():
             raise ComposeError(f"invalid --scale value: {spec!r} (expected service=N)")
         scale[name] = int(count)
+
+    for svc in services:
+        if svc.network_ipv4_addresses and scale.get(svc.name, svc.replicas) > 1:
+            raise ComposeError(f"{svc.name}: multiple replicas cannot share a static IPv4 address")
 
     needed_networks = {n for svc in services for n in svc.networks}
     for net in project.networks.values():
@@ -250,13 +285,15 @@ def cmd_up(ns: argparse.Namespace) -> int:
             cname = project.container_name(svc, index)
             current = existing.pop(cname, None)
             if current is not None:
-                fresh = current["hash"] == desired_hash and not ns.force_recreate
+                fresh = (current["hash"] == desired_hash and not ns.force_recreate
+                         and _network_ipv4_matches(svc, current))
                 if fresh and current["running"]:
                     _info(f"Container {cname} is up-to-date")
                     continue
                 if fresh and not current["running"]:
                     _info(f"Starting {cname} ...")
                     engine.run_retried(["start", cname], dry_run=ns.dry_run)
+                    _verify_network_ipv4(svc, cname, ns.dry_run)
                     _apply_extra_hosts(cname, svc.extra_hosts, ns.dry_run)
                     started.append(cname)
                     continue
@@ -274,6 +311,7 @@ def cmd_up(ns: argparse.Namespace) -> int:
                 ),
                 dry_run=ns.dry_run,
             )
+            _verify_network_ipv4(svc, cname, ns.dry_run)
             _apply_extra_hosts(cname, svc.extra_hosts, ns.dry_run)
             started.append(cname)
 

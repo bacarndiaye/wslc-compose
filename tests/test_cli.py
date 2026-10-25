@@ -1,7 +1,11 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+import pytest
+
 from wslc_compose import cli
+from wslc_compose.engine import WslcError
+from wslc_compose.loader import ComposeError
 from wslc_compose.model import Project, Service
 
 
@@ -148,6 +152,7 @@ def test_project_containers_accepts_wslc_list_field_names(monkeypatch):
             "created": "3 seconds ago",
             "status": "Up 6 seconds",
             "ports": "127.0.0.1:1521->1521/tcp",
+            "networks": None,
         }
     ]
     assert cli._format_ports(containers[0]["ports"]) == "127.0.0.1:1521->1521/tcp"
@@ -157,6 +162,72 @@ def test_format_created_matches_docker_compose_relative_output():
     now = datetime(2026, 10, 23, 14, 19, 44, tzinfo=timezone.utc)
 
     assert cli._format_created("2026-10-23 16:19:41 +0200 CEST", now) == "3 seconds ago"
+
+
+@pytest.mark.parametrize(
+    ("desired", "requested", "actual", "running", "action"),
+    [
+        ("10.0.0.51", "10.0.0.51", "10.0.0.51", True, "keep"),
+        ("10.0.0.51", "10.0.0.51", "", False, "start"),
+        ("10.0.0.52", "10.0.0.51", "10.0.0.51", True, "recreate"),
+        ("10.0.0.51", "10.0.0.51", "10.0.0.2", True, "recreate"),
+        ("10.0.0.51", "10.0.0.51", "", True, "recreate"),
+        ("10.0.0.51", None, "10.0.0.51", True, "recreate"),
+        (None, "10.0.0.51", "10.0.0.51", True, "recreate"),
+        (None, None, "10.0.0.2", True, "keep"),
+    ],
+)
+def test_up_reconciles_ipv4_even_when_shared_hash_matches(
+    monkeypatch, desired, requested, actual, running, action
+):
+    service = Service(name="web", image="fixture", networks=["front"],
+                      network_ipv4_addresses={"front": desired} if desired else {})
+    project = Project(name="demo", directory=".", services={"web": service})
+    current = {"name": "demo-web-1", "service": "web", "index": 1,
+               "hash": service.config_hash(project), "running": running,
+               "networks": {"front": {"IPAddress": actual,
+                   "IPAMConfig": {"IPv4Address": requested} if requested else None}}}
+    calls = []
+    monkeypatch.setattr(cli, "_load", lambda _: project)
+    monkeypatch.setattr(cli, "_project_containers", lambda *_, **__: [current])
+    monkeypatch.setattr(cli.engine, "run", lambda args, **_: calls.append(args))
+    monkeypatch.setattr(cli.engine, "run_retried", lambda args, **_: calls.append(args))
+    monkeypatch.setattr(cli.engine, "inspect", lambda _: {
+        "State": {"Running": True}, "NetworkSettings": {"Networks": {"front": {
+            "IPAddress": desired, "IPAMConfig": {"IPv4Address": desired}}}}})
+    ns = cli.build_parser().parse_args(["up", "-d"])
+
+    assert cli.cmd_up(ns) == 0
+    commands = [args[0] for args in calls]
+    assert commands == {"keep": [], "start": ["start"],
+                        "recreate": (["stop"] if running else []) + ["remove", "run"]}[action]
+    if action == "recreate" and desired:
+        assert calls[-1][calls[-1].index("--ip") + 1] == desired
+
+
+def test_up_rejects_static_ip_scaling_before_engine_access(monkeypatch):
+    service = Service(name="web", image="fixture", networks=["front"],
+                      network_ipv4_addresses={"front": "10.0.0.51"})
+    project = Project(name="demo", directory=".", services={"web": service})
+    monkeypatch.setattr(cli, "_load", lambda _: project)
+    monkeypatch.setattr(cli.engine, "run", lambda *_args, **_kwargs: pytest.fail("engine accessed"))
+    with pytest.raises(ComposeError, match="multiple replicas"):
+        cli.cmd_up(cli.build_parser().parse_args(["up", "-d", "--scale", "web=2"]))
+
+
+@pytest.mark.parametrize("requested, actual", [(None, "10.0.0.2"), ("10.0.0.51", "10.0.0.2")])
+def test_up_fails_when_engine_ignores_static_ip(monkeypatch, requested, actual):
+    service = Service(name="web", image="fixture", networks=["front"],
+                      network_ipv4_addresses={"front": "10.0.0.51"})
+    project = Project(name="demo", directory=".", services={"web": service})
+    monkeypatch.setattr(cli, "_load", lambda _: project)
+    monkeypatch.setattr(cli, "_project_containers", lambda *_, **__: [])
+    monkeypatch.setattr(cli.engine, "run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cli.engine, "inspect", lambda _: {
+        "State": {"Running": True}, "NetworkSettings": {"Networks": {"front": {
+            "IPAddress": actual, "IPAMConfig": {"IPv4Address": requested}}}}})
+    with pytest.raises(WslcError, match="did not apply"):
+        cli.cmd_up(cli.build_parser().parse_args(["up", "-d"]))
 
 
 def test_ps_matches_docker_compose_column_order(monkeypatch, capsys):

@@ -74,6 +74,9 @@ def run_args(
         args += ["--network", mode]
     elif service.networks:
         args += ["--network", service.networks[0]]
+        address = service.network_ipv4_addresses.get(service.networks[0])
+        if address:
+            args += ["--ip", address]
         aliases = set(service.network_aliases.get(service.networks[0], []))
         aliases.add(service.name)
         for alias in sorted(aliases):

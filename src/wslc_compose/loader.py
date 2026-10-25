@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from ipaddress import IPv4Address
 import re
 import shlex
 from typing import Dict, List, Optional, Tuple
@@ -455,6 +456,19 @@ def load_project(
             net = project.networks[key]
             svc.networks.append(net.name)
             svc.network_aliases[net.name] = aliases.get(key, [])
+            endpoint = raw_svc_networks.get(key) if isinstance(raw_svc_networks, dict) else None
+            if isinstance(endpoint, dict) and "ipv4_address" in endpoint:
+                try:
+                    address = str(IPv4Address(str(endpoint["ipv4_address"]).strip()))
+                except ValueError as exc:
+                    raise ComposeError(
+                        f"service {svc_name!r}, network {key!r}: invalid ipv4_address"
+                    ) from exc
+                if net.name != svc.networks[0]:
+                    raise ComposeError(
+                        f"service {svc_name!r}: ipv4_address is supported only on the first network"
+                    )
+                svc.network_ipv4_addresses[net.name] = address
 
         # named volumes must be declared
         for mount in svc.volumes:
