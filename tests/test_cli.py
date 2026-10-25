@@ -91,9 +91,10 @@ def test_extra_hosts_are_applied_after_start(monkeypatch):
     cli._apply_extra_hosts("demo-web-1", ["db:10.0.0.2", "host:host-gateway"], False)
 
     args, kwargs = calls[0]
-    assert args[:4] == ["exec", "demo-web-1", "sh", "-c"]
-    assert "10.0.0.2 db" in args[4]
-    assert "$GW host" in args[4]
+    assert args[:6] == ["exec", "--user", "0", "demo-web-1", "sh", "-c"]
+    assert "/proc/net/route" in args[6]
+    assert "10.0.0.2 db" in args[6]
+    assert "$GW host" in args[6]
     assert kwargs["check"] is False
 
 

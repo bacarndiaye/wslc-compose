@@ -447,8 +447,15 @@ def _apply_extra_hosts(container: str, hosts: List[str], dry_run: bool) -> None:
         addr = "$GW" if address.strip().lower() == "host-gateway" else address.strip()
         lines.append(f'echo "{addr} {host.strip()}" >> /etc/hosts')
     if lines:
-        script = "GW=$(ip route 2>/dev/null | awk '/^default/{print $3; exit}'); " + "; ".join(lines)
-        engine.run(["exec", container, "sh", "-c", script], check=False, dry_run=dry_run)
+        script = (
+            "GW=$(awk '$2 == \"00000000\" { h=$3; for (i=7; i>=1; i-=2) { "
+            "hi=index(\"0123456789ABCDEF\", substr(h,i,1))-1; "
+            "lo=index(\"0123456789ABCDEF\", substr(h,i+1,1))-1; "
+            "printf \"%s%d\", i==7 ? \"\" : \".\", hi*16+lo } print \"\"; exit }' "
+            "/proc/net/route 2>/dev/null); "
+            + "; ".join(lines)
+        )
+        engine.run(["exec", "--user", "0", container, "sh", "-c", script], check=False, dry_run=dry_run)
 
 
 
