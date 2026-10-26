@@ -363,6 +363,25 @@ services on the next `up`.
 
 ## Networking
 
+### Host gateway and published ports
+
+`extra_hosts: ["host.docker.internal:host-gateway"]` keeps the application's original
+hostnames and published port numbers. WSLC exposes those ports on Windows using different
+internal VM ports; adding the bridge IP to `/etc/hosts` alone does not reproduce Docker's
+published-port hairpin routing. For projects requesting `host-gateway`, the frontend therefore
+reconciles project-owned IPv4 DNAT/SNAT and forwarding chains inside the native WSLC session.
+TCP/UDP publications with omitted host IP or `0.0.0.0` are supported; explicit loopback/interface
+bindings are not widened. Only running containers owned by the same Compose project are targets.
+
+The rules for bridge-network clients are refreshed on apply/start/restart/stop and removed by `down`. Compatible frontends
+use the same owner/chain format and lock, preserve Docker's existing chains and `DOCKER-USER`
+policy, and fail if an existing compatibility chain has a different owner. WSLC 3.0.3.0's
+`system session run` and session `iptables`, `iptables-restore` and `flock` are required.
+This handles published Compose service ports; it does not proxy arbitrary Windows-only host
+services. `/etc/hosts` writing still uses root after startup until WSLC exposes native `--add-host`.
+
+### Compose networks
+
 - Services without a `networks:` key join the project's `default` network
   (`<project>_default`), created on demand.
 - On user-defined wslc networks, containers resolve each other by **container name**

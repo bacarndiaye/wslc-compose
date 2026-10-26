@@ -17,11 +17,12 @@ import yaml
 from wslc_compose import (
     LABEL_CONFIG_HASH,
     LABEL_INDEX,
+    LABEL_HOST_GATEWAY,
     LABEL_PROJECT,
     LABEL_SERVICE,
     __version__,
 )
-from wslc_compose import engine, flags, networking
+from wslc_compose import engine, flags, host_gateway, networking
 from wslc_compose.engine import WslcError
 from wslc_compose.loader import ComposeError, find_compose_file, load_project
 from wslc_compose.metadata import resource_labels
@@ -121,6 +122,7 @@ def _project_containers(project: Project, all_states: bool = False) -> List[dict
                 "ports": entry.get("Ports") or [],
                 "networks": (data.get("NetworkSettings") or {}).get("Networks"),
                 "network_mode": (data.get("HostConfig") or {}).get("NetworkMode"),
+                "host_gateway": labels.get(LABEL_HOST_GATEWAY) == "v1",
             }
         )
     return enriched
@@ -260,6 +262,7 @@ def cmd_up(ns: argparse.Namespace) -> int:
     # Include exited containers so `up` can start an unchanged service instead
     # of colliding with its existing Compose name.
     existing = {c["name"]: c for c in _project_containers(project, all_states=True)} if not ns.dry_run else {}
+    gateway_known = any(current.get("host_gateway") for current in existing.values())
     started: List[str] = []
 
     for svc in services:
@@ -270,10 +273,13 @@ def cmd_up(ns: argparse.Namespace) -> int:
             )
         desired_hash = svc.config_hash(project)
         for index in range(1, replicas + 1):
+            host_gateway.reconcile(project, ns.dry_run, previously_enabled=gateway_known)
             cname = project.container_name(svc, index)
             current = existing.pop(cname, None)
             if current is not None:
                 fresh = (current["hash"] == desired_hash and not ns.force_recreate
+                         and not (current.get("host_gateway") and not any(
+                             entry.partition(":")[2].strip().lower() == "host-gateway" for entry in svc.extra_hosts))
                          and networking.configuration_matches(svc, current))
                 if fresh and current["running"]:
                     _info(f"Container {cname} is up-to-date")
@@ -313,6 +319,7 @@ def cmd_up(ns: argparse.Namespace) -> int:
                 engine.run(["remove", "-f", name], capture=True, dry_run=ns.dry_run)
                 existing.pop(name)
 
+    host_gateway.reconcile(project, ns.dry_run, previously_enabled=gateway_known)
     if ns.detach or ns.dry_run or not started:
         return 0
     _info("Attaching to logs (Ctrl+C to detach; containers keep running)")
@@ -332,6 +339,8 @@ def cmd_down(ns: argparse.Namespace) -> int:
         engine.run(["remove", "-f", entry["name"]], capture=True, dry_run=ns.dry_run)
 
     existing_networks = engine.network_names()
+    host_gateway.reconcile(project, ns.dry_run, cleanup=True,
+                           previously_enabled=any(entry.get("host_gateway") for entry in containers))
     for net in project.networks.values():
         if not net.external and net.name in existing_networks:
             try:
@@ -495,7 +504,7 @@ def _apply_extra_hosts(container: str, hosts: List[str], dry_run: bool) -> None:
 
 def _lifecycle(ns: argparse.Namespace, action: str) -> int:
     project = _load(ns)
-    containers = _project_containers(project)
+    containers = _project_containers(project, all_states=action in ("start", "restart"))
     if ns.services:
         containers = [c for c in containers if c["service"] in ns.services]
     if not containers:
@@ -510,6 +519,10 @@ def _lifecycle(ns: argparse.Namespace, action: str) -> int:
         if action in ("start", "restart"):
             _info(f"Starting {entry['name']} ...")
             engine.run_retried(["start", entry["name"]], dry_run=ns.dry_run)
+            service = project.services[entry["service"]]
+            _apply_extra_hosts(entry["name"], service.extra_hosts, ns.dry_run)
+    host_gateway.reconcile(project, ns.dry_run,
+                           previously_enabled=any(entry.get("host_gateway") for entry in containers))
     return 0
 
 

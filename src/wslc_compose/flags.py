@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import Callable, List, Optional
 
-from wslc_compose import LABEL_CREATE_OPERATION
+from wslc_compose import LABEL_CREATE_OPERATION, LABEL_HOST_GATEWAY
 from wslc_compose.metadata import container_labels
 from wslc_compose.model import Project, Service
 
@@ -33,6 +33,8 @@ def run_args(
         args += ["-l", f"{key}={value}"]
     if operation:
         args += ["-l", f"{LABEL_CREATE_OPERATION}={operation}"]
+    if any(entry.partition(":")[2].strip().lower() == "host-gateway" for entry in service.extra_hosts):
+        args += ["-l", f"{LABEL_HOST_GATEWAY}=v1"]
 
     for env_file in service.env_files:
         args += ["--env-file", mapper(env_file)]

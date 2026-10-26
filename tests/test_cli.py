@@ -154,6 +154,7 @@ def test_project_containers_accepts_wslc_list_field_names(monkeypatch):
             "ports": "127.0.0.1:1521->1521/tcp",
             "networks": None,
             "network_mode": None,
+            "host_gateway": False,
         }
     ]
     assert cli._format_ports(containers[0]["ports"]) == "127.0.0.1:1521->1521/tcp"

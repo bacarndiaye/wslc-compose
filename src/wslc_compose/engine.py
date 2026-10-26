@@ -172,6 +172,21 @@ def popen(args: List[str], **kwargs) -> subprocess.Popen:
     return subprocess.Popen([find_wslc()] + args, **kwargs)
 
 
+def run_session_script(script: str, dry_run: bool = False) -> subprocess.CompletedProcess:
+    """The non-TTY session API requires a valid redirected stdin handle on Windows."""
+    argv = [find_wslc(), "system", "session", "run", "sh", "-c", script]
+    if dry_run:
+        print("+ wslc system session run sh -c <project host-gateway compatibility rules>")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+    try:
+        result = subprocess.run(argv, input="", capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        raise WslcError("host-gateway session execution failed or timed out") from exc
+    if result.returncode:
+        raise WslcError("host-gateway compatibility failed: " + (result.stderr.strip() or result.stdout.strip()))
+    return result
+
+
 def capture_json(args: List[str]):
     proc = run(args, capture=True)
     text = proc.stdout.strip()
