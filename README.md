@@ -1,6 +1,7 @@
 # wslc-compose
 
 [![CI](https://github.com/bacarndiaye/wslc-compose/actions/workflows/ci.yml/badge.svg)](https://github.com/bacarndiaye/wslc-compose/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/wslc-compose.svg)](https://pypi.org/project/wslc-compose/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 
@@ -94,7 +95,22 @@ irm https://raw.githubusercontent.com/bacarndiaye/wslc-compose/main/install.ps1 
 
 Commands are installed into `~/.local/bin` (make sure it is on your `PATH`).
 
-### With an existing package manager
+### From PyPI
+
+[`wslc-compose` is published on PyPI](https://pypi.org/project/wslc-compose/). Pin the
+0.x series so a future breaking 1.0 never lands by surprise:
+
+```console
+pipx install "wslc-compose==0.*"
+# or
+uv tool install "wslc-compose==0.*"
+# or
+pip install --user "wslc-compose==0.*"
+```
+
+(drop the `==0.*` to always get the latest release, or use `==0.3.0` to pin exactly.)
+
+### From Git (unreleased changes)
 
 ```console
 pipx install git+https://github.com/bacarndiaye/wslc-compose
