@@ -170,7 +170,7 @@ Apply to every subcommand and go **before** it: `wslc-compose -f other.yml up -d
 
 | Option | Description |
 |---|---|
-| `-f, --file FILE` | compose file to use (default: auto-detect in `.` and parent directories) |
+| `-f, --file FILE` | compose file to use; **repeat to overlay several** (later files win, like `docker compose -f a.yml -f b.yml`). Paths may also be joined with `:` (`;` on Windows) or set via `COMPOSE_FILE`. Default: auto-detect in `.` and parent directories |
 | `-p, --project-name NAME` | project name (default: `name:` key, else directory name) |
 | `--env-file FILE` | alternate `.env` file for interpolation |
 | `--profile NAME` | enable a compose profile (repeatable) |
@@ -328,6 +328,19 @@ Boundaries:
 - `build.secrets` fails clearly — `wslc build` has no `--secret` option. Do not replace it
   with `build.args`; run the credentialed step in a runtime container instead.
 - Every secret/config is a bind mount and counts toward the wslc session mount limit.
+
+### Multiple compose files
+
+```console
+wslc-compose -f compose.yaml -f compose.override.yaml up -d
+COMPOSE_FILE=compose.yaml:prod.yaml wslc-compose config
+```
+
+Files are overlaid in order: mappings are merged, `ports`/`expose`/`dns`/`env_file`/... are
+appended, `environment`/`labels` merge per key, `volumes` merge per container path, and
+scalars such as `image` or `command` are replaced. Relative paths resolve against the
+**first** file's directory. A file may omit `services` (e.g. only `volumes:` or `include:`)
+as long as the merged result has at least one service.
 
 ## Variable interpolation
 

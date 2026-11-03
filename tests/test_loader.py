@@ -581,3 +581,70 @@ def test_include_carries_secret_definitions_with_rebased_paths(tmp_path):
     )
     project = load_project(str(tmp_path / "compose.yaml"))
     assert project.secrets["tok"].file == str(tmp_path / "sub" / "tok.txt")
+
+
+def _w(path, text):
+    path.write_text(text, encoding="utf-8")
+    return str(path)
+
+
+def test_multiple_files_overlay_like_docker_compose(tmp_path):
+    base = _w(
+        tmp_path / "a.yaml",
+        """
+services:
+  web:
+    image: nginx:1
+    ports: ["8080:80"]
+    environment: [A=1, B=2]
+    volumes: ["./one:/data", "./html:/usr/share/nginx/html"]
+    command: ["old"]
+    networks: [front]
+  db:
+    image: postgres
+networks:
+  front:
+""",
+    )
+    over = _w(
+        tmp_path / "b.yaml",
+        """
+services:
+  web:
+    image: nginx:2
+    ports: ["9090:90"]
+    environment: {B: "3", C: "4"}
+    volumes: ["./two:/data"]
+    command: ["new"]
+    networks: [back]
+  cache:
+    image: redis
+networks:
+  back:
+""",
+    )
+    project = load_project([base, over])
+    assert set(project.services) == {"web", "db", "cache"}
+    web = project.services["web"]
+    assert web.image == "nginx:2"
+    assert [(p.published, p.target) for p in web.ports] == [("8080", 80), ("9090", 90)]
+    assert web.environment == {"A": "1", "B": "3", "C": "4"}
+    assert web.command == ["new"]
+    assert sorted(v.target for v in web.volumes) == ["/data", "/usr/share/nginx/html"]
+    assert next(v for v in web.volumes if v.target == "/data").source == str(tmp_path / "two")
+    assert web.networks == [f"{project.name}_front", f"{project.name}_back"]
+    assert project.compose_files == [base, over]
+
+
+def test_first_file_without_services_is_allowed(tmp_path):
+    # Issue #3: a base file that only declares volumes, services come from a later file.
+    base = _w(tmp_path / "vol.yaml", "volumes:\n  data:\n")
+    over = _w(tmp_path / "svc.yaml", "services:\n  app:\n    image: x\n    volumes: ['data:/d']\n")
+    project = load_project([base, over])
+    assert "app" in project.services and "data" in project.volumes
+
+
+def test_no_services_anywhere_is_still_an_error(tmp_path):
+    only = _w(tmp_path / "vol.yaml", "volumes:\n  data:\n")
+    with pytest.raises(ComposeError, match="no 'services' section"):
+        load_project([only])
