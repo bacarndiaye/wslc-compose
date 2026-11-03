@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.1 — 2026-11-03
+
+### Fixed
+- `healthcheck` is supported (mapped to wslc `--health-*` options): the misleading
+  "healthchecks are not supported … ignoring" warning is gone and the README is corrected.
+  Only `depends_on: condition: service_healthy` is still treated as `service_started` (#17).
+
+### Documentation
+- Installation from PyPI (`pip install "wslc-compose==0.*"`) in the README, landing page and
+  migration guide (#16).
+
+### CI
+- Releases are published to PyPI automatically through Trusted Publishing (#15).
+
 ## 0.3.0 — 2026-11-03
 
 ### Added
