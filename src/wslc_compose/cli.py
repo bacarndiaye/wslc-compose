@@ -4,25 +4,28 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
-from datetime import datetime, timezone
 import os
 import signal
 import subprocess
 import sys
 import threading
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 import yaml
 
 from wslc_compose import (
     LABEL_CONFIG_HASH,
-    LABEL_INDEX,
     LABEL_HOST_GATEWAY,
+    LABEL_INDEX,
     LABEL_PROJECT,
     LABEL_SERVICE,
     __version__,
+    engine,
+    flags,
+    host_gateway,
+    networking,
 )
-from wslc_compose import engine, flags, host_gateway, networking
 from wslc_compose.engine import WslcError
 from wslc_compose.loader import ComposeError, find_compose_file, load_project
 from wslc_compose.metadata import resource_labels

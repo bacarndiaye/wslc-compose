@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import os
-from ipaddress import IPv4Address, IPv4Network
 import re
 import shlex
+from ipaddress import IPv4Address, IPv4Network
 from typing import Dict, List, Optional, Tuple
 
 import yaml

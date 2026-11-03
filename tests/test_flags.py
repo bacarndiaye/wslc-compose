@@ -5,7 +5,17 @@ import pytest
 from wslc_compose import LABEL_CONFIG_FILES, LABEL_CONFIG_HASH, LABEL_PROJECT
 from wslc_compose.flags import build_args, image_name, run_args
 from wslc_compose.loader import load_project
-from wslc_compose.model import BuildConfig, FileMount, FileResource, HealthCheck, Network, Project, Service, Volume, VolumeMount
+from wslc_compose.model import (
+    BuildConfig,
+    FileMount,
+    FileResource,
+    HealthCheck,
+    Network,
+    Project,
+    Service,
+    Volume,
+    VolumeMount,
+)
 
 COMPOSE = """
 name: demo

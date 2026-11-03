@@ -36,5 +36,9 @@ packages = ["src/wslc_compose"]
 line-length = 100
 target-version = "py39"
 
+[tool.ruff.lint]
+# Explicit so CI does not change meaning when ruff widens its default rule set.
+select = ["E4", "E7", "E9", "F", "I"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
