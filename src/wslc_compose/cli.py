@@ -45,16 +45,32 @@ def _info(message: str) -> None:
 # --- project loading -------------------------------------------------------
 
 
-def _locate_compose_file(explicit: Optional[str]) -> str:
+def _split_files(values: List[str]) -> List[str]:
+    """Flatten `-f` values; each may hold several paths separated like COMPOSE_FILE."""
+    sep = os.environ.get("COMPOSE_PATH_SEPARATOR") or os.pathsep
+    files = []
+    for value in values:
+        if os.path.isfile(value):  # a real path wins over splitting (e.g. 'C:\\x.yml')
+            files.append(value)
+        else:
+            files.extend(part for part in value.split(sep) if part)
+    return files
+
+
+def _locate_compose_files(explicit: Optional[List[str]]) -> List[str]:
+    if not explicit and os.environ.get("COMPOSE_FILE"):
+        explicit = [os.environ["COMPOSE_FILE"]]
     if explicit:
-        if not os.path.isfile(explicit):
-            raise ComposeError(f"compose file not found: {explicit}")
-        return explicit
+        files = _split_files(explicit)
+        for path in files:
+            if not os.path.isfile(path):
+                raise ComposeError(f"compose file not found: {path}")
+        return files
     directory = os.getcwd()
     while True:
         found = find_compose_file(directory)
         if found:
-            return found
+            return [found]
         parent = os.path.dirname(directory)
         if parent == directory:
             raise ComposeError(
@@ -65,8 +81,8 @@ def _locate_compose_file(explicit: Optional[str]) -> str:
 
 
 def _load(ns: argparse.Namespace) -> Project:
-    compose_file = _locate_compose_file(ns.file)
-    project = load_project(compose_file, project_name=ns.project_name, env_file=ns.env_file)
+    compose_files = _locate_compose_files(ns.file)
+    project = load_project(compose_files, project_name=ns.project_name, env_file=ns.env_file)
     for warning in project.warnings:
         _err(f"warning: {warning}")
     return project
@@ -581,7 +597,10 @@ def build_parser() -> argparse.ArgumentParser:
         prog="wslc-compose",
         description="docker-compose style orchestration for WSL containers (wslc)",
     )
-    parser.add_argument("-f", "--file", help="compose file (default: auto-detect)")
+    parser.add_argument(
+        "-f", "--file", action="append",
+        help="compose file; repeat to overlay several (default: auto-detect, or $COMPOSE_FILE)",
+    )
     parser.add_argument("-p", "--project-name", help="project name (default: directory name)")
     parser.add_argument("--env-file", help="alternate .env file")
     parser.add_argument("--dry-run", action="store_true", help="print wslc commands instead of running them")

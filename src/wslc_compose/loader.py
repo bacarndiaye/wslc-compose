@@ -6,7 +6,7 @@ import os
 import re
 import shlex
 from ipaddress import IPv4Address, IPv4Network
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 import yaml
 
@@ -421,6 +421,81 @@ def _read_compose(path: str, stack: Tuple[str, ...] = ()) -> dict:
     return raw
 
 
+# Service keys whose list values are concatenated (not replaced) when files are overlaid.
+_APPEND_KEYS = frozenset(
+    {"ports", "expose", "dns", "dns_search", "dns_opt", "tmpfs", "env_file", "profiles",
+     "secrets", "configs", "extra_hosts", "cap_add", "cap_drop", "devices", "security_opt"}
+)
+# Keys that may be written as a list ("K=V") or a mapping; merged as mappings.
+_KEYVALUE_KEYS = frozenset({"environment", "labels", "sysctls"})
+# Keys written as a list of names or a mapping name -> options; merged as mappings.
+_NAMED_KEYS = frozenset({"networks", "depends_on"})
+
+
+def _to_mapping(value, keyvalue: bool):
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, list):
+        result = {}
+        for item in value:
+            if keyvalue:
+                key, sep, val = str(item).partition("=")
+                result[key] = val if sep else None
+            else:
+                result[str(item)] = None
+        return result
+    return value
+
+
+def _volume_target(entry):
+    try:
+        return parse_volume(entry, ".").target
+    except ComposeError:
+        return str(entry)
+
+
+def _merge_value(key, base, over):
+    if key in _KEYVALUE_KEYS or key in _NAMED_KEYS:
+        b, o = _to_mapping(base, key in _KEYVALUE_KEYS), _to_mapping(over, key in _KEYVALUE_KEYS)
+        if isinstance(b, dict) and isinstance(o, dict):
+            return _merge_dicts(b, o)
+        return over
+    if key == "volumes" and isinstance(base, list) and isinstance(over, list):
+        overridden = {_volume_target(v) for v in over}
+        return [v for v in base if _volume_target(v) not in overridden] + list(over)
+    if key in _APPEND_KEYS and isinstance(base, list) and isinstance(over, list):
+        return base + [v for v in over if v not in base]
+    if isinstance(base, dict) and isinstance(over, dict):
+        return _merge_dicts(base, over)
+    return over
+
+
+def _merge_dicts(base: dict, over: dict) -> dict:
+    result = dict(base)
+    for key, value in over.items():
+        result[key] = _merge_value(key, result[key], value) if key in result else value
+    return result
+
+
+def merge_compose(base: dict, override: dict) -> dict:
+    """Overlay `override` on `base` like `docker compose -f a.yml -f b.yml`."""
+    result = dict(base)
+    for key, value in override.items():
+        if key in ("services", "networks", "volumes", "secrets", "configs") and key in result:
+            merged = dict(result[key] or {})
+            for name, cfg in (value or {}).items():
+                if name in merged and isinstance(merged[name], dict) and isinstance(cfg, dict):
+                    merged[name] = _merge_dicts(merged[name], cfg)
+                else:
+                    merged[name] = cfg
+            result[key] = merged
+        else:
+            result[key] = value
+    return result
+
+
 def _parse_file_mounts(value, kind, definitions, default_target, service_name):
     """Parse a service's `secrets:` / `configs:` list into mounts.
 
@@ -554,20 +629,30 @@ def _parse_network(key: str, cfg, project_name: str) -> Network:
 
 
 def load_project(
-    compose_file: str,
+    compose_file: Union[str, List[str]],
     project_name: Optional[str] = None,
     env_file: Optional[str] = None,
 ) -> Project:
-    compose_file = os.path.abspath(compose_file)
+    """Load one compose file, or several that are overlaid in order (later files win).
+
+    Relative paths resolve against the directory of the *first* file, as in Docker Compose.
+    """
+    compose_files = [os.path.abspath(f) for f in ([compose_file] if isinstance(compose_file, str) else compose_file)]
+    if not compose_files:
+        raise ComposeError("no compose file given")
+    compose_file = compose_files[0]
     project_dir = os.path.dirname(compose_file)
 
     dotenv_path = env_file or os.path.join(project_dir, ".env")
     env = dict(load_dotenv(dotenv_path))
     env.update(os.environ)  # process env wins
 
-    raw = _read_compose(compose_file)
-    if "services" not in raw:
-        raise ComposeError(f"{compose_file}: no 'services' section found")
+    raw = _read_compose(compose_files[0])
+    for extra in compose_files[1:]:
+        raw = merge_compose(raw, _read_compose(extra))
+    if not raw.get("services"):
+        where = compose_file if len(compose_files) == 1 else ", ".join(compose_files)
+        raise ComposeError(f"{where}: no 'services' section found")
     raw = interpolate_tree(raw, env)
 
     name = normalize_project_name(
@@ -579,7 +664,7 @@ def load_project(
     project = Project(
         name=name,
         directory=project_dir,
-        compose_files=[compose_file],
+        compose_files=compose_files,
         env_file=os.path.abspath(env_file) if env_file else None,
     )
 
