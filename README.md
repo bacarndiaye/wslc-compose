@@ -279,13 +279,15 @@ Show the wslc-compose and wslc versions.
 | `profiles` | service skipped unless its profile is enabled or it is named explicitly |
 | `stdin_open`, `tty` | `-i`, `-t` |
 | `name` (top level) | default project name |
+| `include` (string, list, or `path:` mapping) | other compose files merged into the project; relative paths inside an included file resolve against *its* directory |
 
 Keys that wslc cannot honor yet are **accepted and reported as a warning** instead of
 failing, so your existing files keep working: `restart`, `healthcheck`, `privileged`,
 `cap_add`/`cap_drop`, `devices`, `extra_hosts`, `sysctls`, `secrets`, `configs`, `init`,
 `pid`, `ipc`, `read_only`, `security_opt`, `logging`.
 
-Rejected with an explicit error (no silent surprise): anonymous volumes
+Rejected with an explicit error (no silent surprise): duplicate service/network/volume
+names across `include`d files, circular or missing includes, anonymous volumes
 (`- /data` without a source), references to undeclared networks/volumes, circular
 `depends_on`, scaling a service that sets `container_name`.
 
@@ -503,6 +505,9 @@ Both examples live in this repository and double as integration tests:
 
 - [`examples/build`](examples/build) — building an image from a local Dockerfile with
   `build.args`.
+
+- [`examples/multiple-services`](examples/multiple-services) — a root `compose.yaml` that
+  only `include`s `service1.yaml` and `service2.yaml` (two nginx servers on 8089 / 8088).
 
 ## Project layout
 
