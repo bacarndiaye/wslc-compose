@@ -29,7 +29,21 @@ class WslcError(RuntimeError):
 def _is_self(path: str) -> bool:
     """True when `path` is our own `wslc` wrapper script, not the real CLI."""
     try:
-        return os.path.realpath(path) == os.path.realpath(sys.argv[0])
+        candidate = os.path.realpath(path)
+        for value in (sys.argv[0], sys.executable):
+            current = os.path.realpath(value)
+            while True:
+                if candidate == current:
+                    return True
+                parent = os.path.dirname(current)
+                if parent == current:
+                    break
+                current = parent
+                if not current.lower().endswith(".exe"):
+                    continue
+                if candidate == current:
+                    return True
+        return False
     except OSError:
         return False
 
@@ -39,13 +53,14 @@ def find_wslc() -> str:
     override = os.environ.get("WSLC_COMPOSE_BIN")
     if override:
         return override
-    for name in ("wslc.exe", "wslc"):
-        path = shutil.which(name)
-        if path and not _is_self(path):
-            return path
     for path in WSLC_FALLBACKS:
         if os.path.isfile(path):
             return path
+    for directory in os.get_exec_path():
+        for name in ("wslc.exe", "wslc"):
+            path = shutil.which(name, path=directory)
+            if path and not _is_self(path):
+                return path
     raise WslcError(
         "wslc CLI not found. Install the WSL container preview "
         "(https://learn.microsoft.com/windows/wsl/wsl-container) or set WSLC_COMPOSE_BIN."
@@ -99,7 +114,14 @@ def run(
     if dry_run:
         print("+ " + " ".join(argv))
         return subprocess.CompletedProcess(argv, 0, "", "")
-    proc = subprocess.run(argv, capture_output=capture, text=capture)
+    proc = subprocess.run(
+        argv,
+        check=False,
+        capture_output=capture,
+        text=capture,
+        encoding="utf-8" if capture else None,
+        errors="replace" if capture else None,
+    )
     if check and proc.returncode != 0:
         detail = (proc.stderr or "").strip() if capture else ""
         raise WslcError(
@@ -144,6 +166,9 @@ def run_retried(
 
 
 def popen(args: List[str], **kwargs) -> subprocess.Popen:
+    if kwargs.get("text") or kwargs.get("universal_newlines"):
+        kwargs.setdefault("encoding", "utf-8")
+        kwargs.setdefault("errors", "replace")
     return subprocess.Popen([find_wslc()] + args, **kwargs)
 
 
@@ -153,7 +178,12 @@ def capture_json(args: List[str]):
     if not text:
         return []
     try:
-        return [json.loads(text_) for text_ in text.split('\n')]
+        result = json.loads(text)
+        return result if isinstance(result, list) else [result]
+    except json.JSONDecodeError:
+        pass
+    try:
+        return [json.loads(line) for line in text.splitlines() if line.strip()]
     except json.JSONDecodeError as exc:
         raise WslcError(f"unexpected non-JSON output from wslc {' '.join(args)}: {exc}")
 
@@ -183,21 +213,9 @@ def inspect_many(ids: List[str]) -> Dict[str, dict]:
     return {i: data for i in ids if (data := inspect(i)) is not None}
 
 
-def _names_from_table(args: List[str], column: str = "NAME") -> List[str]:
-    """Parse names out of a wslc table output (network/volume list)."""
-    proc = run(args, capture=True)
-    lines = proc.stdout.splitlines()
-    if not lines:
-        return []
-    header = lines[0]
-    idx = header.find(column)
-    if idx < 0:
-        return []
-    names = []
-    for line in lines[1:]:
-        if len(line) > idx:
-            names.append(line[idx:].split()[0])
-    return names
+def _names_from_json(args: List[str]) -> List[str]:
+    """Return resource names without depending on localized table headers."""
+    return [entry["Name"] for entry in capture_json(args) if entry.get("Name")]
 
 
 def image_exists(name: str) -> bool:
@@ -213,11 +231,11 @@ def image_exists(name: str) -> bool:
 
 
 def network_names() -> List[str]:
-    return _names_from_table(["network", "list"])
+    return _names_from_json(["network", "list", "--format", "json"])
 
 
 def volume_names() -> List[str]:
-    return _names_from_table(["volume", "list"], column="VOLUME NAME")
+    return _names_from_json(["volume", "list", "--format", "json"])
 
 
 def ensure_network(name: str, dry_run: bool = False) -> bool:

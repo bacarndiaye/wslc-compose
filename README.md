@@ -85,6 +85,12 @@ Works even on WSL distros without `pip`, `venv` or `pipx` — it bootstraps a st
 curl -fsSL https://raw.githubusercontent.com/bacarndiaye/wslc-compose/main/install.sh | sh
 ```
 
+On Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/bacarndiaye/wslc-compose/main/install.ps1 | iex
+```
+
 Commands are installed into `~/.local/bin` (make sure it is on your `PATH`).
 
 ### With an existing package manager
@@ -103,6 +109,14 @@ pip install --user git+https://github.com/bacarndiaye/wslc-compose
 git clone https://github.com/bacarndiaye/wslc-compose
 cd wslc-compose
 WSLC_COMPOSE_SOURCE=$PWD sh install.sh     # or: pip install -e .
+```
+
+On Windows PowerShell:
+
+```powershell
+git clone https://github.com/bacarndiaye/wslc-compose
+cd wslc-compose
+$env:WSLC_COMPOSE_SOURCE = $PWD; .\install.ps1    # or: pip install -e .
 ```
 
 ### Locating the wslc binary
