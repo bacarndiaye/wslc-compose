@@ -108,7 +108,7 @@ uv tool install "wslc-compose==0.*"
 pip install --user "wslc-compose==0.*"
 ```
 
-(drop the `==0.*` to always get the latest release, or use `==0.3.0` to pin exactly.)
+(drop the `==0.*` to always get the latest release, or use `==0.3.1` to pin exactly.)
 
 ### From Git (unreleased changes)
 
