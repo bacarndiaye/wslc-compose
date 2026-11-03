@@ -33,7 +33,6 @@ COMPOSE_FILENAMES = (
 
 # compose keys we accept but wslc cannot enforce (yet)
 UNSUPPORTED_KEYS = {
-    "healthcheck": "healthchecks are not supported by wslc; depends_on conditions fall back to 'started'",
     "cap_add": "capabilities are not configurable with wslc",
     "cap_drop": "capabilities are not configurable with wslc",
     "privileged": "privileged mode is not supported by wslc",
