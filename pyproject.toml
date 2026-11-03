@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "wslc-compose"
-version = "0.2.1"
+version = "0.3.0"
 description = "docker-compose style orchestration for WSL containers (wslc)"
 readme = "README.md"
 license = "MIT"
