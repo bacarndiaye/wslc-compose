@@ -469,3 +469,115 @@ def test_include_conflict_missing_and_cycle(tmp_path):
     _write(tmp_path / "c2.yaml", "include:\n  - c1.yaml\nservices:\n  c2:\n    image: x\n")
     with pytest.raises(ComposeError, match="circular"):
         load_project(str(tmp_path / "c1.yaml"))
+
+
+def _secrets_project(tmp_path, body, files=("tok.txt", "cfg.txt")):
+    for name in files:
+        (tmp_path / name).write_text("top-secret-value")
+    (tmp_path / "compose.yaml").write_text(body)
+    return str(tmp_path / "compose.yaml")
+
+
+def test_file_secrets_and_configs_short_and_long_syntax(tmp_path):
+    path = _secrets_project(
+        tmp_path,
+        """
+services:
+  app:
+    image: x
+    secrets:
+      - tok
+      - source: tok
+        target: /root/.tok
+        mode: 0400
+    configs:
+      - cfg
+secrets:
+  tok:
+    file: ./tok.txt
+configs:
+  cfg:
+    file: ./cfg.txt
+""",
+    )
+    project = load_project(path)
+    svc = project.services["app"]
+    assert [m.target for m in svc.secrets] == ["/run/secrets/tok", "/root/.tok"]
+    assert [m.target for m in svc.configs] == ["/cfg"]
+    assert "mode cannot be enforced" in "\n".join(project.warnings)
+    assert "top-secret-value" not in repr(project)
+
+
+def test_secret_and_config_with_same_key_use_their_own_files(tmp_path):
+    from wslc_compose import flags
+
+    path = _secrets_project(
+        tmp_path,
+        """
+services:
+  app:
+    image: x
+    secrets: [shared]
+    configs: [shared]
+secrets:
+  shared:
+    file: ./tok.txt
+configs:
+  shared:
+    file: ./cfg.txt
+""",
+    )
+    project = load_project(path)
+    args = flags.run_args(project, project.services["app"], 1, lambda p: p)
+    assert f"{tmp_path / 'tok.txt'}:/run/secrets/shared:ro" in args
+    assert f"{tmp_path / 'cfg.txt'}:/shared:ro" in args
+
+
+@pytest.mark.parametrize(
+    ("definition", "message"),
+    [
+        ("external: true", "external secrets are not supported"),
+        ("environment: FEED_TOKEN", "only file-backed secrets"),
+        ("file: ./missing.txt", "file not found"),
+        ("{}", "only file-backed secrets"),
+    ],
+)
+def test_unsupported_or_broken_secret_definitions(tmp_path, definition, message):
+    path = _secrets_project(
+        tmp_path,
+        f"services:\n  app:\n    image: x\n    secrets: [tok]\nsecrets:\n  tok:\n    {definition}\n",
+    )
+    with pytest.raises(ComposeError, match=message):
+        load_project(path)
+
+
+@pytest.mark.parametrize(
+    ("service_body", "message"),
+    [
+        ("secrets: [nope]", "undefined secret 'nope'"),
+        ("configs: [nope]", "undefined config 'nope'"),
+        ("secrets: [tok, {source: tok, target: tok}]", "multiple secrets target"),
+        ("secrets: [{source: tok, target: a/b}]", "invalid target"),
+        ("secrets: [tok]\n    volumes: ['data:/run/secrets/tok']", "volume"),
+        ("build: {context: ., secrets: [tok]}", "build.secrets is not supported"),
+    ],
+)
+def test_service_secret_reference_errors(tmp_path, service_body, message):
+    path = _secrets_project(
+        tmp_path,
+        f"services:\n  app:\n    image: x\n    {service_body}\n"
+        "secrets:\n  tok:\n    file: ./tok.txt\nvolumes:\n  data:\n",
+    )
+    with pytest.raises(ComposeError, match=message):
+        load_project(path)
+
+
+def test_include_carries_secret_definitions_with_rebased_paths(tmp_path):
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "tok.txt").write_text("v")
+    (tmp_path / "compose.yaml").write_text("include:\n  - sub/inc.yaml\n")
+    (tmp_path / "sub" / "inc.yaml").write_text(
+        "services:\n  app:\n    image: x\n    secrets: [tok]\nsecrets:\n  tok:\n    file: ./tok.txt\n"
+    )
+    project = load_project(str(tmp_path / "compose.yaml"))
+    assert project.secrets["tok"].file == str(tmp_path / "sub" / "tok.txt")
