@@ -27,6 +27,7 @@ naming, config-drift detection and scaling included.
 - [Migrating an existing wslc setup](#migrating-an-existing-wslc-setup)
 - [Command reference](#command-reference)
 - [Compose file support](#compose-file-support)
+- [Secrets and configs](#secrets-and-configs)
 - [Variable interpolation](#variable-interpolation)
 - [Naming conventions and labels](#naming-conventions-and-labels)
 - [How `up` decides what to do](#how-up-decides-what-to-do)
@@ -279,18 +280,54 @@ Show the wslc-compose and wslc versions.
 | `labels` (list & map) | `-l` (merged with the tracking labels below) |
 | `profiles` | service skipped unless its profile is enabled or it is named explicitly |
 | `stdin_open`, `tty` | `-i`, `-t` |
+| `secrets` / `configs` (`file:` source; short & long service syntax) | read-only file mount at `/run/secrets/<name>` (secrets) or `/<name>` (configs), or `target` — see [Secrets and configs](#secrets-and-configs) |
 | `name` (top level) | default project name |
 | `include` (string, list, or `path:` mapping) | other compose files merged into the project; relative paths inside an included file resolve against *its* directory |
 
 Keys that wslc cannot honor yet are **accepted and reported as a warning** instead of
 failing, so your existing files keep working: `restart`, `healthcheck`, `privileged`,
-`cap_add`/`cap_drop`, `devices`, `extra_hosts`, `sysctls`, `secrets`, `configs`, `init`,
+`cap_add`/`cap_drop`, `devices`, `sysctls`, `init`,
 `pid`, `ipc`, `read_only`, `security_opt`, `logging`.
 
-Rejected with an explicit error (no silent surprise): duplicate service/network/volume
+Rejected with an explicit error (no silent surprise): `environment:`/`external:` secrets and
+configs, undefined secret/config references, `build.secrets`, duplicate service/network/volume
 names across `include`d files, circular or missing includes, anonymous volumes
 (`- /data` without a source), references to undeclared networks/volumes, circular
 `depends_on`, scaling a service that sets `container_name`.
+
+## Secrets and configs
+
+File-backed `secrets` and `configs` use the standard Compose syntax. Each one is mounted
+read-only, and only into the services that request it. Short syntax mounts a secret at
+`/run/secrets/<name>` (a config at `/<name>`):
+
+```yaml
+services:
+  restore:
+    image: mcr.microsoft.com/dotnet/sdk:10.0
+    secrets:
+      - nuget_config                       # -> /run/secrets/nuget_config
+      - source: feed_token
+        target: /root/.nuget/feed.token    # absolute path, or a bare file name
+secrets:
+  nuget_config:
+    file: C:/Users/me/.nuget/private.NuGet.Config
+  feed_token:
+    file: ./feed.token
+```
+
+Keep secret files out of source control and restrict their host permissions. Contents are
+never copied into the model, labels or command line — only the host path is passed to
+`wslc -v`.
+
+Boundaries:
+
+- Only `file:` sources are supported; `environment:`, `content:` and `external:` fail with a
+  clear error.
+- `uid`, `gid` and `mode` are accepted with a warning: wslc bind mounts cannot enforce them.
+- `build.secrets` fails clearly — `wslc build` has no `--secret` option. Do not replace it
+  with `build.args`; run the credentialed step in a runtime container instead.
+- Every secret/config is a bind mount and counts toward the wslc session mount limit.
 
 ## Variable interpolation
 
@@ -480,8 +517,8 @@ services. `/etc/hosts` writing still uses root after startup until WSLC exposes 
 - **Published ports bind the Windows loopback**, not the distro's: test them from
   the Windows side (browser, `powershell.exe Invoke-WebRequest`), not with a `curl
   localhost` inside WSL.
-- `privileged`, `cap_add`, `devices`, `sysctls`, `secrets`, `configs`, `extra_hosts`,
-  `logging` — not configurable with wslc; ignored with a warning.
+- `privileged`, `cap_add`, `devices`, `sysctls`, `logging` — not configurable with wslc;
+  ignored with a warning.
 
 When wslc gains native Compose support ([#40948](https://github.com/microsoft/WSL/issues/40948))
 or a Docker Engine API endpoint ([#40976](https://github.com/microsoft/WSL/issues/40976)),

@@ -311,6 +311,11 @@ def _parse_depends_on(value) -> Tuple[List[str], List[str]]:
 def _parse_build(value, project_dir: str) -> BuildConfig:
     if isinstance(value, str):
         return BuildConfig(context=_resolve_bind_source(value, project_dir))
+    if "secrets" in value:
+        raise ComposeError(
+            "build.secrets is not supported: 'wslc build' has no --secret option "
+            "(do not pass credentials as build args)"
+        )
     context = _resolve_bind_source(value.get("context", "."), project_dir)
     return BuildConfig(
         context=context,
@@ -321,7 +326,7 @@ def _parse_build(value, project_dir: str) -> BuildConfig:
         no_cache=bool(value.get("no_cache", False)),
     )
 
-_MERGED_SECTIONS = ("services", "networks", "volumes")
+_MERGED_SECTIONS = ("services", "networks", "volumes", "secrets", "configs")
 
 
 def _rebase(path: str, base_dir: str) -> str:
@@ -395,7 +400,12 @@ def _read_compose(path: str, stack: Tuple[str, ...] = ()) -> dict:
                 raise ComposeError(f"{path}: included file not found: {rel}")
             included = _read_compose(inc_path, stack + (path,))
             if os.path.dirname(inc_path) != base_dir:
-                _rebase_service_paths(included.get("services") or {}, os.path.dirname(inc_path))
+                inc_dir = os.path.dirname(inc_path)
+                _rebase_service_paths(included.get("services") or {}, inc_dir)
+                for section in ("secrets", "configs"):
+                    for cfg in (included.get(section) or {}).values():
+                        if isinstance(cfg, dict) and isinstance(cfg.get("file"), str):
+                            cfg["file"] = _rebase(cfg["file"], inc_dir)
             for section in _MERGED_SECTIONS:
                 items = included.get(section) or {}
                 target = raw.setdefault(section, {})
@@ -411,18 +421,83 @@ def _read_compose(path: str, stack: Tuple[str, ...] = ()) -> dict:
     return raw
 
 
-def _parse_file_mounts(value, project_dir: str, default_target: str):
-    mounts = []
-    for item in value or []:
+def _parse_file_mounts(value, kind, definitions, default_target, service_name):
+    """Parse a service's `secrets:` / `configs:` list into mounts.
+
+    Returns (mounts, warnings). Every reference must exist in the top-level `kind` section.
+    """
+    mounts: List[FileMount] = []
+    warnings: List[str] = []
+    targets = set()
+    if value is None:
+        return mounts, warnings
+    if not isinstance(value, list):
+        raise ComposeError(f"service {service_name!r}: {kind}: expected a list")
+    label = kind[:-1]
+    for item in value:
         if isinstance(item, str):
-            mounts.append(FileMount(item, default_target + item))
+            source, target, ignored = item, item, []
         elif isinstance(item, dict) and item.get("source"):
             source = str(item["source"])
             target = str(item.get("target") or source)
-            mounts.append(FileMount(source, target if target.startswith("/") else default_target + target))
+            ignored = [k for k in ("uid", "gid", "mode") if k in item]
         else:
-            raise ComposeError("secrets/configs entries require a source")
-    return mounts
+            raise ComposeError(f"service {service_name!r}: {label} entries require a source")
+        if source not in definitions:
+            raise ComposeError(f"service {service_name!r} references undefined {label} {source!r}")
+        if target.startswith("/"):
+            container_target = target
+        else:
+            if target in ("", ".", "..") or "/" in target or "\\" in target:
+                raise ComposeError(
+                    f"service {service_name!r}: {label} {source!r} has invalid target "
+                    f"{target!r}; use a filename or an absolute container path"
+                )
+            container_target = default_target + target
+        if container_target in targets:
+            raise ComposeError(
+                f"service {service_name!r}: multiple {kind} target {container_target!r}"
+            )
+        targets.add(container_target)
+        mounts.append(FileMount(source, container_target))
+        if ignored:
+            warnings.append(
+                f"{label} {source!r}: {', '.join(ignored)} cannot be enforced by wslc file "
+                "mounts and will be ignored"
+            )
+    return mounts, warnings
+
+
+def _parse_file_resources(kind, value, project_dir: str):
+    """Parse top-level `secrets:` / `configs:` (file-backed only)."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ComposeError(f"{kind}: expected a mapping")
+    label = kind[:-1]
+    result = {}
+    for key, cfg in value.items():
+        if not isinstance(cfg, dict):
+            raise ComposeError(f"{label} {key!r}: expected a mapping with a 'file' source")
+        if cfg.get("external"):
+            raise ComposeError(
+                f"{label} {key!r}: external {kind} are not supported by wslc; use a file"
+            )
+        if "environment" in cfg or "content" in cfg:
+            raise ComposeError(
+                f"{label} {key!r}: only file-backed {kind} are supported by wslc; write the "
+                "value to a protected host file and use 'file'"
+            )
+        if not cfg.get("file"):
+            raise ComposeError(f"{label} {key!r}: only file-backed {kind} are supported by wslc")
+        source = _resolve_bind_source(str(cfg["file"]), project_dir)
+        foreign_windows_path = os.name != "nt" and (
+            bool(_WIN_PATH_RE.match(source)) or source.startswith("\\\\")
+        )
+        if not foreign_windows_path and not os.path.isfile(source):
+            raise ComposeError(f"{label} {key!r}: file not found: {source}")
+        result[str(key)] = FileResource(str(key), source)
+    return result
 
 
 def _parse_network(key: str, cfg, project_name: str) -> Network:
@@ -525,13 +600,8 @@ def load_project(
                                       driver_opts=_as_mapping(cfg.get("driver_opts"), "driver_opts"),
                                       labels=_as_mapping(cfg.get("labels"), "labels"))
 
-    for kind, destination in (("secrets", project.secrets), ("configs", project.configs)):
-        for key, cfg in (raw.get(kind) or {}).items():
-            cfg = cfg or {}
-            if cfg.get("external") or not cfg.get("file"):
-                raise ComposeError(f"{kind}.{key}: only file-backed non-external resources are supported")
-            source = str(cfg["file"])
-            destination[str(key)] = FileResource(str(key), _resolve_bind_source(source, project_dir))
+    project.secrets = _parse_file_resources("secrets", raw.get("secrets"), project_dir)
+    project.configs = _parse_file_resources("configs", raw.get("configs"), project_dir)
 
     # --- services ----------------------------------------------------------
     for svc_name, cfg in (raw.get("services") or {}).items():
@@ -649,8 +719,20 @@ def load_project(
         svc.shm_size = str(cfg["shm_size"]) if cfg.get("shm_size") is not None else None
         svc.stdin_open = bool(cfg.get("stdin_open", False))
         svc.tty = bool(cfg.get("tty", False))
-        svc.secrets = _parse_file_mounts(cfg.get("secrets"), project_dir, "/run/secrets/")
-        svc.configs = _parse_file_mounts(cfg.get("configs"), project_dir, "/")
+        svc.secrets, secret_warnings = _parse_file_mounts(
+            cfg.get("secrets"), "secrets", project.secrets, "/run/secrets/", svc_name
+        )
+        svc.configs, config_warnings = _parse_file_mounts(
+            cfg.get("configs"), "configs", project.configs, "/", svc_name
+        )
+        project.warnings.extend(f"{svc_name}: {w}" for w in secret_warnings + config_warnings)
+        volume_targets = {mount.target for mount in svc.volumes}
+        for mount in svc.secrets + svc.configs:
+            if mount.target in volume_targets:
+                raise ComposeError(
+                    f"service {svc_name!r}: {mount.target!r} is used by both a volume and a "
+                    "secret/config"
+                )
         svc.healthcheck = _parse_healthcheck(cfg.get("healthcheck"))
         hosts = cfg.get("extra_hosts") or []
         svc.extra_hosts = ([f"{host}:{address}" for host, address in hosts.items()]
