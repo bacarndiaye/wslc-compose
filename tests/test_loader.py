@@ -648,3 +648,22 @@ def test_no_services_anywhere_is_still_an_error(tmp_path):
     only = _w(tmp_path / "vol.yaml", "volumes:\n  data:\n")
     with pytest.raises(ComposeError, match="no 'services' section"):
         load_project([only])
+
+
+def test_healthcheck_is_supported_without_warning(tmp_path):
+    (tmp_path / "compose.yaml").write_text(
+        "services:\n  web:\n    image: x\n    healthcheck:\n"
+        "      test: [CMD-SHELL, 'true']\n      interval: 3s\n      retries: 2\n"
+    )
+    project = load_project(str(tmp_path / "compose.yaml"))
+    assert project.services["web"].healthcheck.retries == 2
+    assert not any("healthcheck" in w for w in project.warnings)
+
+
+def test_depends_on_service_healthy_still_warns(tmp_path):
+    (tmp_path / "compose.yaml").write_text(
+        "services:\n  a:\n    image: x\n  b:\n    image: x\n    depends_on:\n"
+        "      a:\n        condition: service_healthy\n"
+    )
+    project = load_project(str(tmp_path / "compose.yaml"))
+    assert any("service_healthy" in w for w in project.warnings)

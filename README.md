@@ -286,7 +286,8 @@ Show the wslc-compose and wslc versions.
 | `tmpfs` (top-level list or `type: tmpfs`) | `--tmpfs` |
 | Multiple `networks`, per-endpoint `aliases` / `ipv4_address`, `external: true`, custom `name:` | Native `create`, `network connect`, `start`; one-network services use `run` |
 | Network `driver`, `driver_opts`, `labels`, `internal`, IPv4 IPAM `subnet` / `gateway` / `ip_range` | `network create --driver --opt --internal --subnet --gateway --ip-range` |
-| `depends_on` (list & map) | topological start/creation order |
+| `depends_on` (list & map) | topological start/creation order (`condition:` is treated as `service_started`, see [limitations](#known-wslc-preview-limitations)) |
+| `healthcheck` (`test`, `interval`, `timeout`, `start_period`, `retries`, `disable`) | `--health-cmd`, `--health-interval`, `--health-timeout`, `--health-start-period`, `--health-retries`, `--no-healthcheck` — the status shows in `ps` as `(healthy)` / `(unhealthy)` |
 | `deploy.replicas` | number of containers (see also `--scale`) |
 | `deploy.resources.limits.cpus` / `.memory`, `cpus`, `mem_limit` | `--cpus`, `-m` |
 | `deploy.resources.reservations.devices` (gpu), `gpus` | `--gpus` |
@@ -301,7 +302,7 @@ Show the wslc-compose and wslc versions.
 | `include` (string, list, or `path:` mapping) | other compose files merged into the project; relative paths inside an included file resolve against *its* directory |
 
 Keys that wslc cannot honor yet are **accepted and reported as a warning** instead of
-failing, so your existing files keep working: `restart`, `healthcheck`, `privileged`,
+failing, so your existing files keep working: `restart`, `privileged`,
 `cap_add`/`cap_drop`, `devices`, `sysctls`, `init`,
 `pid`, `ipc`, `read_only`, `security_opt`, `logging`.
 
@@ -522,8 +523,9 @@ services. `/etc/hosts` writing still uses root after startup until WSLC exposes 
 
 - **`restart:` policies** — no wslc equivalent yet; ignored (a `restart` after reboot
   is manual: `wslc compose up -d`).
-- **`healthcheck`** / `depends_on: condition: service_healthy` — not supported;
-  conditions fall back to *service_started*.
+- **`depends_on: condition: service_healthy` / `service_completed_successfully`** — not
+  honored: the dependency is only waited on until it is *started*, not healthy (a warning
+  is printed). `healthcheck` itself **is** supported and reported by `ps`.
 - **One IPv4 IPAM subnet per network**, without IPv6/custom IPAM or auxiliary
   address reservations (see [Networking](#networking)). Multiple networks per container are supported.
 - **Session mount limit**: the current preview caps mounted volumes at ~15 per WSL
