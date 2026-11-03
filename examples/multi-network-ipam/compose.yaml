@@ -1,0 +1,35 @@
+name: multi-network-ipam
+services:
+  web:
+    image: nginx:alpine
+    ports: ["8080:80"]
+    networks:
+      frontend:
+        aliases: [public-web]
+        ipv4_address: 172.28.10.10
+      backend:
+        aliases: [private-web]
+        ipv4_address: 172.28.20.10
+  cache:
+    image: redis:7-alpine
+    networks: [backend]
+    volumes: [cache-data:/data]
+networks:
+  frontend:
+    driver: bridge
+    labels: {purpose: frontend}
+    ipam:
+      config:
+        - subnet: 172.28.10.0/24
+          gateway: 172.28.10.1
+          ip_range: 172.28.10.128/25
+  backend:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.28.20.0/24
+          gateway: 172.28.20.1
+          ip_range: 172.28.20.128/25
+volumes:
+  cache-data: {}

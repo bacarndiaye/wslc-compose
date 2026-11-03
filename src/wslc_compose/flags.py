@@ -5,7 +5,8 @@ from __future__ import annotations
 import os
 from typing import Callable, List, Optional
 
-from wslc_compose import LABEL_CONFIG_HASH, LABEL_INDEX, LABEL_PROJECT, LABEL_SERVICE
+from wslc_compose import LABEL_CREATE_OPERATION, LABEL_HOST_GATEWAY
+from wslc_compose.metadata import container_labels
 from wslc_compose.model import Project, Service
 
 
@@ -15,20 +16,25 @@ def run_args(
     index: int = 1,
     detach: bool = True,
     path_mapper: Optional[Callable[[str], str]] = None,
+    *,
+    create: bool = False,
+    operation: Optional[str] = None,
 ) -> List[str]:
-    """Arguments for `wslc run` creating one container of a service."""
+    """Arguments for `wslc run`, or native `create` before attaching secondary networks."""
     mapper = path_mapper or (lambda p: p)
-    args: List[str] = ["run"]
-    if detach:
+    args: List[str] = ["create" if create else "run"]
+    if detach and not create:
         args.append("-d")
 
     args += ["--name", project.container_name(service, index)]
-    args += ["-l", f"{LABEL_PROJECT}={project.name}"]
-    args += ["-l", f"{LABEL_SERVICE}={service.name}"]
-    args += ["-l", f"{LABEL_INDEX}={index}"]
-    args += ["-l", f"{LABEL_CONFIG_HASH}={service.config_hash()}"]
     for key, value in service.labels.items():
         args += ["-l", f"{key}={value}"]
+    for key, value in container_labels(project, service, index).items():
+        args += ["-l", f"{key}={value}"]
+    if operation:
+        args += ["-l", f"{LABEL_CREATE_OPERATION}={operation}"]
+    if any(entry.partition(":")[2].strip().lower() == "host-gateway" for entry in service.extra_hosts):
+        args += ["-l", f"{LABEL_HOST_GATEWAY}=v1"]
 
     for env_file in service.env_files:
         args += ["--env-file", mapper(env_file)]
@@ -39,6 +45,17 @@ def run_args(
         args += ["-p", port.to_flag()]
 
     for mount in service.volumes:
+        if mount.structured:
+            parts = [f"type={mount.type}"]
+            if mount.source:
+                source = mapper(mount.source) if mount.type == "bind" else mount.source
+                parts.append(f"source={source}")
+            parts.append(f"target={mount.target}")
+            if mount.read_only:
+                parts.append("readonly")
+            parts.extend(mount.options)
+            args += ["--mount", ",".join(parts)]
+            continue
         if mount.type == "tmpfs":
             args += ["--tmpfs", mount.target]
             continue
@@ -49,11 +66,25 @@ def run_args(
         if mount.read_only:
             spec += ":ro"
         args += ["-v", spec]
+    for mount in service.secrets + service.configs:
+        resource = (project.secrets | project.configs)[mount.source]
+        args += ["-v", f"{mapper(resource.file)}:{mount.target}:ro"]
     for target in service.tmpfs:
         args += ["--tmpfs", target]
 
-    if service.networks:
+    if service.network_mode:
+        mode = service.network_mode
+        if mode.startswith("service:"):
+            dependency = mode.split(":", 1)[1]
+            if dependency not in project.services:
+                raise ValueError(f"network_mode references unknown service {dependency!r}")
+            mode = "container:" + project.container_name(project.services[dependency])
+        args += ["--network", mode]
+    elif service.networks:
         args += ["--network", service.networks[0]]
+        address = service.network_ipv4_addresses.get(service.networks[0])
+        if address:
+            args += ["--ip", address]
         aliases = set(service.network_aliases.get(service.networks[0], []))
         aliases.add(service.name)
         for alias in sorted(aliases):
@@ -84,6 +115,23 @@ def run_args(
         args += ["--ulimit", ulimit]
     if service.stop_signal:
         args += ["--stop-signal", service.stop_signal]
+    if service.stop_timeout_seconds is not None:
+        args += ["--stop-timeout", str(service.stop_timeout_seconds)]
+    health = service.healthcheck
+    if health:
+        if health.disabled:
+            args.append("--no-healthcheck")
+        elif health.test:
+            command = health.test[1] if health.test[0] == "CMD-SHELL" and len(health.test) > 1 else " ".join(health.test[1:])
+            args += ["--health-cmd", command]
+            if health.interval:
+                args += ["--health-interval", health.interval]
+            if health.timeout:
+                args += ["--health-timeout", health.timeout]
+            if health.start_period:
+                args += ["--health-start-period", health.start_period]
+            if health.retries is not None:
+                args += ["--health-retries", str(health.retries)]
     if service.gpus:
         args += ["--gpus", service.gpus]
     if service.stdin_open:
@@ -99,6 +147,17 @@ def run_args(
     args += entrypoint[1:]
     args += service.command or []
     return args
+
+
+def network_connect_args(service: Service, network: str, container: str) -> List[str]:
+    """Arguments scoped to exactly one secondary endpoint."""
+    args = ["network", "connect"]
+    address = service.network_ipv4_addresses.get(network)
+    if address:
+        args += ["--ip", address]
+    for alias in sorted(set(service.network_aliases.get(network, []) + [service.name])):
+        args += ["--network-alias", alias]
+    return args + [network, container]
 
 
 def build_args(
@@ -125,7 +184,7 @@ def build_args(
         args += ["--target", build.target]
     if build.pull:
         args.append("--pull")
-    if no_cache:
+    if no_cache or build.no_cache:
         args.append("--no-cache")
     args.append(mapper(build.context))
     return args

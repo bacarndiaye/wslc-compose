@@ -60,6 +60,36 @@ def test_run_retried_does_not_retry_other_errors(monkeypatch):
     assert len(calls) == 1
 
 
+def test_list_project_containers_excludes_stopped_by_default(monkeypatch):
+    calls = []
+
+    def fake_capture_json(args):
+        calls.append(args)
+        return []
+
+    monkeypatch.setattr(engine, "capture_json", fake_capture_json)
+
+    assert engine.list_project_containers("demo") == []
+    assert calls == [
+        ["list", "--format", "json", "-f", "label=com.wslc-compose.project=demo"],
+    ]
+
+
+def test_list_project_containers_includes_all_states_when_requested(monkeypatch):
+    calls = []
+
+    def fake_capture_json(args):
+        calls.append(args)
+        return []
+
+    monkeypatch.setattr(engine, "capture_json", fake_capture_json)
+
+    assert engine.list_project_containers("demo", all_states=True) == []
+    assert calls == [
+        ["list", "-a", "--format", "json", "-f", "label=com.wslc-compose.project=demo"],
+    ]
+
+
 def test_run_uses_utf8_for_captured_output(monkeypatch):
     captured = {}
 
@@ -112,6 +142,64 @@ def test_volume_names_uses_json_inventory(monkeypatch):
     monkeypatch.setattr(engine, "capture_json", lambda args: [{"Name": "purchase-service_data"}])
 
     assert engine.volume_names() == ["purchase-service_data"]
+
+
+def test_ensure_network_applies_resource_labels(monkeypatch):
+    calls = []
+    monkeypatch.setattr(engine, "network_names", lambda: [])
+    monkeypatch.setattr(
+        engine,
+        "run",
+        lambda args, dry_run=False: calls.append((args, dry_run)),
+    )
+
+    assert engine.ensure_network("demo_default", {"com.wslc-compose.project": "demo"})
+    assert calls == [
+        (["network", "create", "-l", "com.wslc-compose.project=demo", "demo_default"], False)
+    ]
+
+
+def test_ensure_network_applies_internal_flag(monkeypatch):
+    calls = []
+    monkeypatch.setattr(engine, "network_names", lambda: [])
+    monkeypatch.setattr(engine, "run", lambda args, dry_run=False: calls.append((args, dry_run)))
+
+    assert engine.ensure_network("demo_private", internal=True)
+    assert calls == [(["network", "create", "--internal", "demo_private"], False)]
+
+
+def test_ensure_network_applies_driver_options_and_ipam(monkeypatch):
+    calls = []
+    monkeypatch.setattr(engine, "network_names", lambda: [])
+    monkeypatch.setattr(engine, "run", lambda args, **_: calls.append(args))
+    assert engine.ensure_network("front", driver="bridge", driver_opts={"mtu": "1400"},
+                                 subnet="10.1.0.0/24", gateway="10.1.0.1", ip_range="10.1.0.128/25")
+    assert calls == [["network", "create", "--driver", "bridge", "--opt", "mtu=1400",
+                      "--subnet", "10.1.0.0/24", "--gateway", "10.1.0.1", "--ip-range", "10.1.0.128/25", "front"]]
+
+
+def test_ensure_volume_applies_resource_labels(monkeypatch):
+    calls = []
+    monkeypatch.setattr(engine, "volume_names", lambda: [])
+    monkeypatch.setattr(
+        engine,
+        "run",
+        lambda args, dry_run=False: calls.append((args, dry_run)),
+    )
+
+    assert engine.ensure_volume("demo_data", {"com.wslc-compose.project": "demo"})
+    assert calls == [
+        (["volume", "create", "-l", "com.wslc-compose.project=demo", "demo_data"], False)
+    ]
+
+
+def test_ensure_volume_applies_driver_and_options(monkeypatch):
+    calls = []
+    monkeypatch.setattr(engine, "volume_names", lambda: [])
+    monkeypatch.setattr(engine, "run", lambda args, dry_run=False: calls.append((args, dry_run)))
+
+    assert engine.ensure_volume("demo_data", driver="guest", driver_opts={"size": "1G"})
+    assert calls == [(["volume", "create", "--driver", "guest", "--opt", "size=1G", "demo_data"], False)]
 
 
 def test_find_wslc_prefers_explicit_override(monkeypatch):

@@ -172,6 +172,21 @@ def popen(args: List[str], **kwargs) -> subprocess.Popen:
     return subprocess.Popen([find_wslc()] + args, **kwargs)
 
 
+def run_session_script(script: str, dry_run: bool = False) -> subprocess.CompletedProcess:
+    """The non-TTY session API requires a valid redirected stdin handle on Windows."""
+    argv = [find_wslc(), "system", "session", "run", "sh", "-c", script]
+    if dry_run:
+        print("+ wslc system session run sh -c <project host-gateway compatibility rules>")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+    try:
+        result = subprocess.run(argv, input="", capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        raise WslcError("host-gateway session execution failed or timed out") from exc
+    if result.returncode:
+        raise WslcError("host-gateway compatibility failed: " + (result.stderr.strip() or result.stdout.strip()))
+    return result
+
+
 def capture_json(args: List[str]):
     proc = run(args, capture=True)
     text = proc.stdout.strip()
@@ -191,12 +206,11 @@ def capture_json(args: List[str]):
 # --- queries ---------------------------------------------------------------
 
 
-def list_project_containers(project: str, all_states: bool = True) -> List[dict]:
+def list_project_containers(project: str, all_states: bool = False) -> List[dict]:
     args = ["list", "--format", "json", "-f", f"label={LABEL_PROJECT}={project}"]
     if all_states:
         args.insert(1, "-a")
-    result = capture_json(args)
-    return result if isinstance(result, list) else []
+    return capture_json(args)
 
 
 def inspect(object_id: str) -> Optional[dict]:
@@ -238,15 +252,38 @@ def volume_names() -> List[str]:
     return _names_from_json(["volume", "list", "--format", "json"])
 
 
-def ensure_network(name: str, dry_run: bool = False) -> bool:
+def ensure_network(name: str, labels: Optional[Dict[str, str]] = None, internal: bool = False,
+                   dry_run: bool = False, *, driver: Optional[str] = None,
+                   driver_opts: Optional[Dict[str, str]] = None, subnet: Optional[str] = None,
+                   gateway: Optional[str] = None, ip_range: Optional[str] = None) -> bool:
     if name in network_names():
         return False
-    run(["network", "create", name], dry_run=dry_run)
+    args = ["network", "create"]
+    for key, value in (labels or {}).items():
+        args += ["-l", f"{key}={value}"]
+    if internal:
+        args.append("--internal")
+    if driver:
+        args += ["--driver", driver]
+    for key, value in (driver_opts or {}).items():
+        args += ["--opt", f"{key}={value}"]
+    for flag, value in (("--subnet", subnet), ("--gateway", gateway), ("--ip-range", ip_range)):
+        if value:
+            args += [flag, value]
+    run(args + [name], dry_run=dry_run)
     return True
 
 
-def ensure_volume(name: str, dry_run: bool = False) -> bool:
+def ensure_volume(name: str, labels: Optional[Dict[str, str]] = None, driver: Optional[str] = None,
+                  driver_opts: Optional[Dict[str, str]] = None, dry_run: bool = False) -> bool:
     if name in volume_names():
         return False
-    run(["volume", "create", name], dry_run=dry_run)
+    args = ["volume", "create"]
+    if driver:
+        args += ["--driver", driver]
+    for key, value in (driver_opts or {}).items():
+        args += ["--opt", f"{key}={value}"]
+    for key, value in (labels or {}).items():
+        args += ["-l", f"{key}={value}"]
+    run(args + [name], dry_run=dry_run)
     return True

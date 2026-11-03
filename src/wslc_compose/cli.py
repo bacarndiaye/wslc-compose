@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+from datetime import datetime, timezone
 import os
 import signal
 import subprocess
@@ -16,12 +17,15 @@ import yaml
 from wslc_compose import (
     LABEL_CONFIG_HASH,
     LABEL_INDEX,
+    LABEL_HOST_GATEWAY,
+    LABEL_PROJECT,
     LABEL_SERVICE,
     __version__,
 )
-from wslc_compose import engine, flags
+from wslc_compose import engine, flags, host_gateway, networking
 from wslc_compose.engine import WslcError
 from wslc_compose.loader import ComposeError, find_compose_file, load_project
+from wslc_compose.metadata import resource_labels
 from wslc_compose.model import Project, Service
 
 PROTOCOLS = {6: "tcp", 17: "udp"}
@@ -84,9 +88,9 @@ def _select_services(
 # --- container queries ------------------------------------------------------
 
 
-def _project_containers(project: Project) -> List[dict]:
+def _project_containers(project: Project, all_states: bool = False) -> List[dict]:
     """list entries enriched with inspect data (labels, status)."""
-    entries = engine.list_project_containers(project.name)
+    entries = engine.list_project_containers(project.name, all_states)
     enriched = []
     for entry in entries:
         container_id = entry.get("Id") or entry.get("ID")
@@ -97,17 +101,28 @@ def _project_containers(project: Project) -> List[dict]:
         data = engine.inspect(identifier) or {}
         labels = data.get("Labels") or {}
         state = data.get("State") or {}
+        config = data.get("Config") or {}
+        command = entry.get("Command")
+        if not command:
+            command = " ".join(
+                (config.get("Entrypoint") or []) + (config.get("Cmd") or [])
+            )
         enriched.append(
             {
                 "id": container_id,
                 "name": container_name or data.get("Name"),
                 "image": entry.get("Image") or data.get("Image"),
+                "command": command or "",
                 "service": labels.get(LABEL_SERVICE, ""),
                 "index": int(labels.get(LABEL_INDEX, "1") or 1),
                 "hash": labels.get(LABEL_CONFIG_HASH, ""),
                 "running": bool(state.get("Running")),
-                "status": state.get("Status", "unknown"),
+                "created": _format_created(entry.get("CreatedAt") or data.get("Created") or ""),
+                "status": entry.get("Status") or state.get("Status", "unknown"),
                 "ports": entry.get("Ports") or [],
+                "networks": (data.get("NetworkSettings") or {}).get("Networks"),
+                "network_mode": (data.get("HostConfig") or {}).get("NetworkMode"),
+                "host_gateway": labels.get(LABEL_HOST_GATEWAY) == "v1",
             }
         )
     return enriched
@@ -124,15 +139,45 @@ def _format_ports(ports: List[dict]) -> str:
     return ", ".join(parts)
 
 
+def _format_created(value: str, now: Optional[datetime] = None) -> str:
+    """Format WSLc's absolute creation timestamp like Docker Compose."""
+    try:
+        if len(value) > 10 and value[10] == "T":
+            created = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        else:
+            # WSLc appends a time-zone abbreviation after the numeric offset.
+            created = datetime.strptime(value.rsplit(" ", 1)[0], "%Y-%m-%d %H:%M:%S %z")
+        seconds = max(0, int(((now or datetime.now(timezone.utc)) - created).total_seconds()))
+    except (TypeError, ValueError):
+        return value
+
+    if seconds < 60:
+        unit = "second" if seconds == 1 else "seconds"
+        return f"{seconds} {unit} ago"
+    if seconds < 90:
+        return "About a minute ago"
+    if seconds < 45 * 60:
+        return f"{seconds // 60} minutes ago"
+    if seconds < 90 * 60:
+        return "About an hour ago"
+    if seconds < 24 * 60 * 60:
+        return f"{seconds // 3600} hours ago"
+    if seconds < 42 * 60 * 60:
+        return "About a day ago"
+    return f"{seconds // 86400} days ago"
+
+
 def _print_table(rows: List[List[str]], headers: List[str]) -> None:
-    widths = [len(h) for h in headers]
+    # Docker Compose starts each column at least ten characters after the previous one.
+    # With the two-character separator below, cells need a minimum width of eight.
+    widths = [max(8, len(h)) for h in headers]
     for row in rows:
         for i, cell in enumerate(row):
             widths[i] = max(widths[i], len(cell))
     fmt = "  ".join(f"{{:<{w}}}" for w in widths)
-    print(fmt.format(*headers))
+    print(fmt.format(*headers).rstrip())
     for row in rows:
-        print(fmt.format(*row))
+        print(fmt.format(*row).rstrip())
 
 
 # --- commands ----------------------------------------------------------------
@@ -152,15 +197,40 @@ def cmd_up(ns: argparse.Namespace) -> int:
             raise ComposeError(f"invalid --scale value: {spec!r} (expected service=N)")
         scale[name] = int(count)
 
+    static_addresses = set()
+    for svc in services:
+        if svc.network_ipv4_addresses and scale.get(svc.name, svc.replicas) > 1:
+            raise ComposeError(f"{svc.name}: multiple replicas cannot share a static IPv4 address")
+        if scale.get(svc.name, svc.replicas) > 0:
+            for endpoint in svc.network_ipv4_addresses.items():
+                if endpoint in static_addresses:
+                    raise ComposeError(f"{svc.name}: another selected service requests the same static IPv4 address")
+                static_addresses.add(endpoint)
+
     needed_networks = {n for svc in services for n in svc.networks}
+    network_states = {}
     for net in project.networks.values():
         if net.name not in needed_networks:
             continue
         if net.external:
             if net.name not in engine.network_names():
                 raise ComposeError(f"external network {net.name!r} not found")
-        elif engine.ensure_network(net.name, dry_run=ns.dry_run):
-            _info(f"Network {net.name} created")
+            network_states[net.name] = networking.verify_network(net)
+        else:
+            created = engine.ensure_network(
+                net.name,
+                labels={**net.labels, **resource_labels(project, "network", net.key, net.name)},
+                internal=net.internal,
+                dry_run=ns.dry_run,
+                driver=net.driver, driver_opts=net.driver_opts, subnet=net.subnet,
+                gateway=net.gateway, ip_range=net.ip_range,
+            )
+            if created:
+                _info(f"Network {net.name} created")
+            if not (created and ns.dry_run):
+                network_states[net.name] = networking.verify_network(net)
+    for svc in services:
+        networking.validate_static_addresses(svc, network_states)
 
     needed_volumes = {
         m.source for svc in services for m in svc.volumes if m.type == "volume"
@@ -171,7 +241,13 @@ def cmd_up(ns: argparse.Namespace) -> int:
         if vol.external:
             if vol.name not in engine.volume_names():
                 raise ComposeError(f"external volume {vol.name!r} not found")
-        elif engine.ensure_volume(vol.name, dry_run=ns.dry_run):
+        elif engine.ensure_volume(
+            vol.name,
+            labels={**vol.labels, **resource_labels(project, "volume", vol.key, vol.name)},
+            driver=vol.driver,
+            driver_opts=vol.driver_opts,
+            dry_run=ns.dry_run,
+        ):
             _info(f"Volume {vol.name} created")
 
     for svc in services:
@@ -183,7 +259,10 @@ def cmd_up(ns: argparse.Namespace) -> int:
                 dry_run=ns.dry_run,
             )
 
-    existing = {c["name"]: c for c in _project_containers(project)} if not ns.dry_run else {}
+    # Include exited containers so `up` can start an unchanged service instead
+    # of colliding with its existing Compose name.
+    existing = {c["name"]: c for c in _project_containers(project, all_states=True)} if not ns.dry_run else {}
+    gateway_known = any(current.get("host_gateway") for current in existing.values())
     started: List[str] = []
 
     for svc in services:
@@ -192,18 +271,24 @@ def cmd_up(ns: argparse.Namespace) -> int:
             raise ComposeError(
                 f"{svc.name}: cannot scale a service with container_name set"
             )
-        desired_hash = svc.config_hash()
+        desired_hash = svc.config_hash(project)
         for index in range(1, replicas + 1):
+            host_gateway.reconcile(project, ns.dry_run, previously_enabled=gateway_known)
             cname = project.container_name(svc, index)
             current = existing.pop(cname, None)
             if current is not None:
-                fresh = current["hash"] == desired_hash and not ns.force_recreate
+                fresh = (current["hash"] == desired_hash and not ns.force_recreate
+                         and not (current.get("host_gateway") and not any(
+                             entry.partition(":")[2].strip().lower() == "host-gateway" for entry in svc.extra_hosts))
+                         and networking.configuration_matches(svc, current))
                 if fresh and current["running"]:
                     _info(f"Container {cname} is up-to-date")
                     continue
                 if fresh and not current["running"]:
                     _info(f"Starting {cname} ...")
                     engine.run_retried(["start", cname], dry_run=ns.dry_run)
+                    networking.verify_container(svc, cname, ns.dry_run)
+                    _apply_extra_hosts(cname, svc.extra_hosts, ns.dry_run)
                     started.append(cname)
                     continue
                 _info(f"Recreating {cname} ...")
@@ -214,12 +299,17 @@ def cmd_up(ns: argparse.Namespace) -> int:
                 engine.run(["remove", "-f", cname], capture=True, dry_run=ns.dry_run)
             else:
                 _info(f"Creating {cname} ...")
-            engine.run(
-                flags.run_args(
-                    project, svc, index, detach=True, path_mapper=engine.to_host_path
-                ),
-                dry_run=ns.dry_run,
-            )
+            if len(svc.networks) > 1 and not svc.network_mode:
+                networking.create_and_start(project, svc, index, ns.dry_run)
+            else:
+                engine.run(
+                    flags.run_args(
+                        project, svc, index, detach=True, path_mapper=engine.to_host_path
+                    ),
+                    dry_run=ns.dry_run,
+                )
+                networking.verify_container(svc, cname, ns.dry_run)
+            _apply_extra_hosts(cname, svc.extra_hosts, ns.dry_run)
             started.append(cname)
 
         # drop replicas beyond the requested scale
@@ -229,6 +319,7 @@ def cmd_up(ns: argparse.Namespace) -> int:
                 engine.run(["remove", "-f", name], capture=True, dry_run=ns.dry_run)
                 existing.pop(name)
 
+    host_gateway.reconcile(project, ns.dry_run, previously_enabled=gateway_known)
     if ns.detach or ns.dry_run or not started:
         return 0
     _info("Attaching to logs (Ctrl+C to detach; containers keep running)")
@@ -237,7 +328,7 @@ def cmd_up(ns: argparse.Namespace) -> int:
 
 def cmd_down(ns: argparse.Namespace) -> int:
     project = _load(ns)
-    containers = _project_containers(project)
+    containers = _project_containers(project, all_states=True)
     for entry in containers:
         if entry["running"]:
             _info(f"Stopping {entry['name']} ...")
@@ -248,10 +339,16 @@ def cmd_down(ns: argparse.Namespace) -> int:
         engine.run(["remove", "-f", entry["name"]], capture=True, dry_run=ns.dry_run)
 
     existing_networks = engine.network_names()
+    host_gateway.reconcile(project, ns.dry_run, cleanup=True,
+                           previously_enabled=any(entry.get("host_gateway") for entry in containers))
     for net in project.networks.values():
         if not net.external and net.name in existing_networks:
-            _info(f"Removing network {net.name}")
             try:
+                actual = networking.inspect_network(net.name)
+                if (actual.get("Labels") or {}).get(LABEL_PROJECT) != project.name:
+                    _err(f"warning: preserving network {net.name} (project ownership is unverified)")
+                    continue
+                _info(f"Removing network {net.name}")
                 engine.run(["network", "remove", net.name], capture=True, dry_run=ns.dry_run)
             except WslcError:
                 _err(f"warning: could not remove network {net.name} (still in use?)")
@@ -270,7 +367,7 @@ def cmd_down(ns: argparse.Namespace) -> int:
 
 def cmd_ps(ns: argparse.Namespace) -> int:
     project = _load(ns)
-    containers = _project_containers(project)
+    containers = _project_containers(project, all_states=ns.all)
     if ns.services:
         containers = [c for c in containers if c["service"] in ns.services]
     if ns.quiet:
@@ -280,14 +377,19 @@ def cmd_ps(ns: argparse.Namespace) -> int:
     rows = [
         [
             entry["name"] or "",
-            entry["service"] or "",
             entry["image"] or "",
+            entry["command"],
+            entry["service"] or "",
+            entry["created"],
             entry["status"] or "",
             _format_ports(entry["ports"]),
         ]
         for entry in sorted(containers, key=lambda c: (c["service"], c["index"]))
     ]
-    _print_table(rows, ["NAME", "SERVICE", "IMAGE", "STATUS", "PORTS"])
+    _print_table(
+        rows,
+        ["NAME", "IMAGE", "COMMAND", "SERVICE", "CREATED", "STATUS", "PORTS"],
+    )
     return 0
 
 
@@ -377,9 +479,32 @@ def cmd_exec(ns: argparse.Namespace) -> int:
     return proc.returncode
 
 
+def _apply_extra_hosts(container: str, hosts: List[str], dry_run: bool) -> None:
+    """Best-effort fallback while wslc has no native --add-host flag."""
+    lines = []
+    for entry in hosts:
+        host, sep, address = entry.partition(":")
+        if not sep or not host.strip() or not address.strip():
+            continue
+        addr = "$GW" if address.strip().lower() == "host-gateway" else address.strip()
+        lines.append(f'echo "{addr} {host.strip()}" >> /etc/hosts')
+    if lines:
+        script = (
+            "GW=$(awk '$2 == \"00000000\" { h=$3; for (i=7; i>=1; i-=2) { "
+            "hi=index(\"0123456789ABCDEF\", substr(h,i,1))-1; "
+            "lo=index(\"0123456789ABCDEF\", substr(h,i+1,1))-1; "
+            "printf \"%s%d\", i==7 ? \"\" : \".\", hi*16+lo } print \"\"; exit }' "
+            "/proc/net/route 2>/dev/null); "
+            + "; ".join(lines)
+        )
+        engine.run(["exec", "--user", "0", container, "sh", "-c", script], check=False, dry_run=dry_run)
+
+
+
+
 def _lifecycle(ns: argparse.Namespace, action: str) -> int:
     project = _load(ns)
-    containers = _project_containers(project)
+    containers = _project_containers(project, all_states=action in ("start", "restart"))
     if ns.services:
         containers = [c for c in containers if c["service"] in ns.services]
     if not containers:
@@ -394,6 +519,10 @@ def _lifecycle(ns: argparse.Namespace, action: str) -> int:
         if action in ("start", "restart"):
             _info(f"Starting {entry['name']} ...")
             engine.run_retried(["start", entry["name"]], dry_run=ns.dry_run)
+            service = project.services[entry["service"]]
+            _apply_extra_hosts(entry["name"], service.extra_hosts, ns.dry_run)
+    host_gateway.reconcile(project, ns.dry_run,
+                           previously_enabled=any(entry.get("host_gateway") for entry in containers))
     return 0
 
 
@@ -474,6 +603,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("ps", help="list project containers")
     p.add_argument("services", nargs="*")
+    p.add_argument(
+        "-a", "--all", action="store_true", help="show all containers, including stopped ones"
+    )
     p.add_argument("-q", "--quiet", action="store_true")
     p.set_defaults(func=cmd_ps)
 

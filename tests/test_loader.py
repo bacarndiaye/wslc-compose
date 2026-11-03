@@ -92,6 +92,125 @@ def test_network_aliases(project):
     assert web.network_aliases["demo_front"] == ["www"]
 
 
+def test_static_ipv4_resolves_network_name_and_preserves_aliases(tmp_path):
+    path = tmp_path / "compose.yaml"
+    path.write_text(COMPOSE.replace("aliases: [www]", "aliases: [www]\n        ipv4_address: ' 10.0.0.51 '"))
+    service = load_project(str(path)).services["web"]
+    assert service.network_ipv4_addresses == {"demo_front": "10.0.0.51"}
+    assert service.network_aliases == {"demo_front": ["www"]}
+
+
+@pytest.mark.parametrize("address", ["not-an-ip", "::1", "10.0.0.2/24", "999.0.0.1", "", "null"])
+def test_invalid_static_ipv4_is_rejected(tmp_path, address):
+    path = tmp_path / "compose.yaml"
+    path.write_text(COMPOSE.replace("aliases: [www]", f"aliases: [www]\n        ipv4_address: '{address}'"))
+    with pytest.raises(ComposeError, match="invalid ipv4_address"):
+        load_project(str(path))
+
+
+def test_static_ipv4_is_retained_on_secondary_network(tmp_path):
+    path = tmp_path / "compose.yaml"
+    path.write_text("""
+services:
+  web:
+    image: fixture
+    networks:
+      front: {}
+      back:
+        ipv4_address: 10.0.0.51
+networks:
+  front: {}
+  back: {}
+""")
+    service = load_project(str(path)).services["web"]
+    assert service.network_ipv4_addresses == {service.networks[1]: "10.0.0.51"}
+
+
+def test_network_ipam_and_creation_metadata_are_normalized(tmp_path):
+    path = tmp_path / "compose.yaml"
+    path.write_text("""
+name: demo
+services:
+  web:
+    image: fixture
+    networks:
+      front: {ipv4_address: 10.1.0.10, aliases: [www]}
+      back: {ipv4_address: 10.2.0.20, aliases: [private]}
+networks:
+  front:
+    name: custom-front
+    driver: bridge
+    driver_opts: {mtu: '1400'}
+    labels: {purpose: web}
+    ipam:
+      driver: default
+      config:
+        - subnet: 10.1.0.0/24
+          gateway: 10.1.0.1
+          ip_range: 10.1.0.128/25
+  back:
+    internal: true
+    ipam:
+      config: [{subnet: 10.2.0.0/24}]
+""")
+    project = load_project(str(path))
+    front = project.networks["front"]
+    assert (front.name, front.driver, front.subnet, front.gateway, front.ip_range) == (
+        "custom-front", "bridge", "10.1.0.0/24", "10.1.0.1", "10.1.0.128/25")
+    assert front.driver_opts == {"mtu": "1400"} and front.labels == {"purpose": "web"}
+    assert project.networks["back"].internal
+    assert project.services["web"].network_ipv4_addresses == {
+        "custom-front": "10.1.0.10", "demo_back": "10.2.0.20"}
+    assert project.services["web"].network_aliases == {"custom-front": ["www"], "demo_back": ["private"]}
+
+
+@pytest.mark.parametrize("config", [
+    "{ipam: {config: [{subnet: 10.1.0.0/24}, {subnet: 10.2.0.0/24}]}}",
+    "{ipam: {config: [{subnet: 'fd00::/64'}]}}",
+    "{enable_ipv6: true}", "{enable_ipv4: false}", "{attachable: true}",
+    "{ipam: {driver: custom}}", "{ipam: {options: {foo: bar}}}",
+    "{ipam: {config: [{subnet: 10.1.0.0/24, aux_addresses: {reserved: 10.1.0.5}}]}}",
+    "{ipam: {config: [{subnet: 10.1.0.5/24}]}}",
+    "{ipam: {config: [{subnet: 10.1.0.0/24, gateway: 10.2.0.1}]}}",
+    "{ipam: {config: [{subnet: 10.1.0.0/24, gateway: 10.1.0.255}]}}",
+    "{ipam: {config: [{subnet: 10.1.0.0/24, ip_range: 10.2.0.0/25}]}}",
+    "{ipam: {config: [{gateway: 10.1.0.1}]}}",
+    "{ipam: []}", "{ipam: {config: {}}}", "{ipam: {config: [null]}}",
+    "{unknown: true}",
+])
+def test_ipam_that_cannot_be_applied_is_rejected_instead_of_dropped(tmp_path, config):
+    path = tmp_path / "compose.yaml"
+    path.write_text(f"services:\n  web:\n    image: fixture\n    networks: [front]\nnetworks:\n  front: {config}\n")
+    with pytest.raises(ComposeError, match="networks.front"):
+        load_project(str(path))
+
+
+@pytest.mark.parametrize("address", ["10.2.0.10", "10.1.0.0", "10.1.0.1", "10.1.0.255"])
+def test_static_address_must_be_usable_in_declared_subnet(tmp_path, address):
+    path = tmp_path / "compose.yaml"
+    path.write_text(f"""
+services:
+  web:
+    image: fixture
+    networks:
+      front: {{ipv4_address: {address}}}
+networks:
+  front:
+    ipam:
+      config: [{{subnet: 10.1.0.0/24, gateway: 10.1.0.1}}]
+""")
+    with pytest.raises(ComposeError, match="not usable"):
+        load_project(str(path))
+
+
+@pytest.mark.parametrize("setting", ["ipv6_address: 'fd00::2'", "priority: 100", "gw_priority: 1", "interface_name: eth1"])
+def test_unsupported_endpoint_options_are_not_silently_discarded(tmp_path, setting):
+    path = tmp_path / "compose.yaml"
+    path.write_text(f"services:\n  web:\n    image: fixture\n    networks:\n      front: {{{setting}}}\nnetworks:\n  front: {{}}")
+    with pytest.raises(ComposeError, match="unsupported endpoint"):
+        load_project(str(path))
+
+
 def test_dependency_order(project):
     order = [s.name for s in project.sorted_services()]
     assert order.index("app") < order.index("web")
@@ -169,6 +288,134 @@ services:
     text = "\n".join(project.warnings)
     assert "privileged" in text
     assert "restart" in text
+
+
+@pytest.mark.parametrize(
+    ("healthcheck", "test", "disabled"),
+    [
+        ("test: curl -f http://localhost", ["CMD-SHELL", "curl -f http://localhost"], False),
+        ("test: [CMD, curl, -f, http://localhost]", ["CMD", "curl", "-f", "http://localhost"], False),
+        ("test: [NONE]", ["NONE"], True),
+        ("disable: true", [], True),
+    ],
+)
+def test_healthcheck_forms_are_normalized(tmp_path, healthcheck, test, disabled):
+    (tmp_path / "compose.yaml").write_text(f"""
+services:
+  a:
+    image: x
+    healthcheck:
+      {healthcheck}
+""")
+
+    health = load_project(str(tmp_path / "compose.yaml")).services["a"].healthcheck
+
+    assert health is not None
+    assert health.test == test
+    assert health.disabled is disabled
+
+
+def test_network_mode_does_not_create_default_network(tmp_path):
+    (tmp_path / "compose.yaml").write_text("""
+services:
+  a:
+    image: x
+    network_mode: none
+""")
+
+    project = load_project(str(tmp_path / "compose.yaml"))
+
+    assert project.services["a"].networks == []
+    assert project.networks == {}
+
+
+def test_network_mapping_preserves_internal_flag(tmp_path):
+    (tmp_path / "compose.yaml").write_text("""
+services:
+  a:
+    image: x
+    networks: [private]
+networks:
+  private:
+    internal: true
+""")
+
+    project = load_project(str(tmp_path / "compose.yaml"))
+
+    assert project.networks["private"].internal is True
+
+
+def test_volume_mapping_preserves_driver_options_and_labels(tmp_path):
+    (tmp_path / "compose.yaml").write_text("""
+services:
+  a:
+    image: x
+    volumes: [data:/data]
+volumes:
+  data:
+    driver: guest
+    driver_opts:
+      size: 1G
+    labels:
+      purpose: cache
+""")
+
+    volume = load_project(str(tmp_path / "compose.yaml")).volumes["data"]
+
+    assert volume.driver == "guest"
+    assert volume.driver_opts == {"size": "1G"}
+    assert volume.labels == {"purpose": "cache"}
+
+
+def test_file_backed_secrets_and_configs_are_normalized(tmp_path):
+    (tmp_path / "secret.txt").write_text("secret")
+    (tmp_path / "config.txt").write_text("config")
+    (tmp_path / "compose.yaml").write_text("""
+services:
+  a:
+    image: x
+    secrets: [token]
+    configs:
+      - source: app-config
+        target: app.conf
+secrets:
+  token:
+    file: ./secret.txt
+configs:
+  app-config:
+    file: ./config.txt
+""")
+
+    service = load_project(str(tmp_path / "compose.yaml")).services["a"]
+
+    assert service.secrets[0].target == "/run/secrets/token"
+    assert service.configs[0].target == "/app.conf"
+
+
+
+
+def test_long_form_mount_preserves_type_options_and_readonly(tmp_path):
+    (tmp_path / "compose.yaml").write_text("""
+services:
+  a:
+    image: x
+    volumes:
+      - type: bind
+        source: ./data
+        target: /data
+        read_only: true
+        bind:
+          propagation: rshared
+      - type: tmpfs
+        target: /cache
+        tmpfs:
+          size: 65536
+""")
+
+    mounts = load_project(str(tmp_path / "compose.yaml")).services["a"].volumes
+
+    assert mounts[0].structured and mounts[0].options == ["propagation=rshared"]
+    assert mounts[0].read_only and mounts[1].options == ["size=65536"]
 
 
 def _write(path, text):

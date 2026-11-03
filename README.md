@@ -267,7 +267,8 @@ Show the wslc-compose and wslc versions.
 | `volumes` — named volumes | `wslc volume create` + `-v name:/path` |
 | `volumes` — bind mounts (`./rel`, `/abs`, `~`, `E:\win\path`), `:ro` | `-v` with [path translation](#volumes-and-path-translation) |
 | `tmpfs` (top-level list or `type: tmpfs`) | `--tmpfs` |
-| `networks` incl. `aliases`, `external: true`, custom `name:` | `wslc network create`, `--network`, `--network-alias` |
+| Multiple `networks`, per-endpoint `aliases` / `ipv4_address`, `external: true`, custom `name:` | Native `create`, `network connect`, `start`; one-network services use `run` |
+| Network `driver`, `driver_opts`, `labels`, `internal`, IPv4 IPAM `subnet` / `gateway` / `ip_range` | `network create --driver --opt --internal --subnet --gateway --ip-range` |
 | `depends_on` (list & map) | topological start/creation order |
 | `deploy.replicas` | number of containers (see also `--scale`) |
 | `deploy.resources.limits.cpus` / `.memory`, `cpus`, `mem_limit` | `--cpus`, `-m` |
@@ -318,15 +319,46 @@ Everything is scoped by project so multiple projects coexist cleanly:
 | volume | `<project>_<volume-key>` (external volumes keep their name) |
 | built image | `<project>-<service>` (unless `image:` is set) |
 
-Each container gets tracking labels, which is how commands find project containers
-(`wslc list -f label=com.wslc-compose.project=<name>`):
+`wslc-compose` records Compose metadata as WSLc labels. New resources use the
+`com.wslc-compose.*` namespace, preserving the container labels used by earlier
+versions:
 
 ```
-com.wslc-compose.project           project name
-com.wslc-compose.service           service name
-com.wslc-compose.container-number  replica index (1..N)
-com.wslc-compose.config-hash       hash of the resolved service config
+com.wslc-compose.project                     project name
+com.wslc-compose.version                     wslc-compose version that created it
+com.wslc-compose.project.working_dir         absolute project directory
+com.wslc-compose.project.config_files        JSON array of absolute Compose file paths
+com.wslc-compose.project.environment_file    absolute --env-file path, when supplied
+com.wslc-compose.config-hash                 resolved service or resource configuration hash
+com.wslc-compose.service                     container service name
+com.wslc-compose.container-number            container replica index (1..N)
+com.wslc-compose.network                     Compose network key
+com.wslc-compose.volume                      Compose volume key
 ```
+
+Containers receive the project labels plus `service` and `container-number`.
+Internally-created networks and named volumes receive the project labels plus their
+respective `network` or `volume` key. This lets other WSLc tools identify all of the
+resources belonging to a Compose project.
+
+Inspect labels with the native WSLc commands:
+
+```powershell
+wslc inspect <container-name>
+wslc network inspect <network-name>
+wslc volume inspect <volume-name>
+```
+
+Earlier versions applied only `project`, `service`, `container-number`, and
+`config-hash` to containers. They did not label networks or volumes. Container
+discovery still uses the existing `com.wslc-compose.project` label. Networks and
+volumes continue to be managed by their resolved Compose names, so unlabelled
+resources from earlier versions remain usable and removable.
+
+Existing networks and volumes are never relabelled: `up` reuses them unchanged.
+Likewise, resources declared with `external: true` are neither labelled nor adopted.
+New internal resources receive the additional metadata labels. Recreating a named
+volume removes its data when using `down -v`.
 
 ## How `up` decides what to do
 
@@ -347,6 +379,25 @@ services on the next `up`.
 
 ## Networking
 
+### Host gateway and published ports
+
+`extra_hosts: ["host.docker.internal:host-gateway"]` keeps the application's original
+hostnames and published port numbers. WSLC exposes those ports on Windows using different
+internal VM ports; adding the bridge IP to `/etc/hosts` alone does not reproduce Docker's
+published-port hairpin routing. For projects requesting `host-gateway`, the frontend therefore
+reconciles project-owned IPv4 DNAT/SNAT and forwarding chains inside the native WSLC session.
+TCP/UDP publications with omitted host IP or `0.0.0.0` are supported; explicit loopback/interface
+bindings are not widened. Only running containers owned by the same Compose project are targets.
+
+The rules for bridge-network clients are refreshed on apply/start/restart/stop and removed by `down`. Compatible frontends
+use the same owner/chain format and lock, preserve Docker's existing chains and `DOCKER-USER`
+policy, and fail if an existing compatibility chain has a different owner. WSLC 3.0.3.0's
+`system session run` and session `iptables`, `iptables-restore` and `flock` are required.
+This handles published Compose service ports; it does not proxy arbitrary Windows-only host
+services. `/etc/hosts` writing still uses root after startup until WSLC exposes native `--add-host`.
+
+### Compose networks
+
 - Services without a `networks:` key join the project's `default` network
   (`<project>_default`), created on demand.
 - On user-defined wslc networks, containers resolve each other by **container name**
@@ -354,8 +405,36 @@ services on the next `up`.
   so `db:5432` style URLs from your Docker compose files work unchanged. (Verified
   against the preview: alias and name DNS both resolve.)
 - `external: true` networks are required to exist and are never created/removed.
-- ⚠️ wslc accepts a **single `--network` per container**. If a service lists several
-  networks, the first one is used (documented preview limitation).
+- Every declared network is attached. Multi-network services use **create → connect
+  secondary networks → verify → start** so the entrypoint sees every endpoint.
+  Single-network services keep the direct `run` path.
+- Each endpoint has independent aliases and an optional `ipv4_address`, mapped to
+  `--ip` on `create`/`run` or `network connect` (validated with WSLc 3.0.3.0).
+  `up` checks every endpoint's aliases, requested allocation and live IP. Missing
+  endpoints, alias/IP drift, a changed primary network or removal of a static IP
+  trigger recreation. Unchanged running or stopped containers are reused without
+  duplicate connections. Multiple replicas cannot share one static address.
+- Network declarations support `driver`, `driver_opts`, `labels`, `internal` and
+  the engine's IPv4 IPAM: **one subnet per network**, optional `gateway`, and
+  optional `ip_range` for dynamic allocations. Static IPs may be outside that
+  dynamic pool, but must be usable addresses in the subnet and differ from the gateway.
+  Existing networks are inspected before touching workloads; conflicting requested
+  settings cause an error rather than silently reusing or rewriting the network.
+- WSLC 3.0.3.0 does **not** expose the complete Compose IPAM specification. Multiple
+  subnets in one network, IPv6, custom IPAM drivers/options, `aux_addresses`, and
+  unsupported endpoint controls such as `priority`/`gw_priority` are rejected explicitly.
+  In the engine smoke, repeating `--subnet` retained only the last value, and an
+  IPv6 declaration still reported `EnableIPv6=false`.
+- Static endpoint IPs remain outside `com.wslc-compose.config-hash=v2:...`;
+  new IPAM creation details also remain outside its existing projection. Network
+  resources and endpoint state are verified separately; no additional shared hash is used.
+- Failed multi-network creation removes only the partial container whose identity
+  and operation label were verified. It does not delete existing workloads or named
+  volumes. If ownership/inspect cannot be established, the container is retained for
+  inspection; a cleanup failure is reported. Created network/volume resources remain
+  available for retry or explicit `down`. External and unverified networks are preserved.
+- See [`examples/multi-network-ipam/compose.yaml`](examples/multi-network-ipam/compose.yaml)
+  for a frontend/backend example with static addresses and a dynamic IP pool.
 
 ## Volumes and path translation
 
@@ -379,7 +458,8 @@ services on the next `up`.
   is manual: `wslc compose up -d`).
 - **`healthcheck`** / `depends_on: condition: service_healthy` — not supported;
   conditions fall back to *service_started*.
-- **One network per container** (see [Networking](#networking)).
+- **One IPv4 IPAM subnet per network**, without IPv6/custom IPAM or auxiliary
+  address reservations (see [Networking](#networking)). Multiple networks per container are supported.
 - **Session mount limit**: the current preview caps mounted volumes at ~15 per WSL
   session — error `Too many volumes have been mounted (limit: 15)` / `0x8007000e`.
   This also affects `wslc build` (the build context is mounted). Microsoft says it
