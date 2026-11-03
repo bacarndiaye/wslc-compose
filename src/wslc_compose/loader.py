@@ -283,6 +283,95 @@ def _parse_build(value, project_dir: str) -> BuildConfig:
         pull=bool(value.get("pull", False)),
     )
 
+_MERGED_SECTIONS = ("services", "networks", "volumes")
+
+
+def _rebase(path: str, base_dir: str) -> str:
+    """Make a relative host path (starting with '.') absolute against `base_dir`."""
+    if path.startswith("."):
+        return os.path.normpath(os.path.join(base_dir, path))
+    return path
+
+
+def _rebase_service_paths(services: dict, base_dir: str) -> None:
+    """Anchor relative paths of an included file's services to that file's directory."""
+    for cfg in services.values():
+        if not isinstance(cfg, dict):
+            continue
+        build = cfg.get("build")
+        if isinstance(build, str):
+            cfg["build"] = _rebase(build, base_dir)
+        elif isinstance(build, dict) and isinstance(build.get("context"), str):
+            build["context"] = _rebase(build["context"], base_dir)
+        env_file = cfg.get("env_file")
+        if isinstance(env_file, str):
+            cfg["env_file"] = _rebase(env_file, base_dir)
+        elif isinstance(env_file, list):
+            cfg["env_file"] = [_rebase(f, base_dir) if isinstance(f, str) else f for f in env_file]
+        volumes = cfg.get("volumes")
+        if isinstance(volumes, list):
+            rebased = []
+            for vol in volumes:
+                if isinstance(vol, str) and vol.startswith("."):
+                    source, sep, rest = vol.partition(":")
+                    vol = _rebase(source, base_dir) + sep + rest
+                elif isinstance(vol, dict) and isinstance(vol.get("source"), str):
+                    vol = {**vol, "source": _rebase(vol["source"], base_dir)}
+                rebased.append(vol)
+            cfg["volumes"] = rebased
+
+
+def _include_paths(entry, compose_file: str) -> List[str]:
+    """Normalize one `include:` entry (string, or mapping with `path`) to a path list."""
+    if isinstance(entry, dict):
+        entry = entry.get("path")
+    paths = entry if isinstance(entry, list) else [entry]
+    if not paths or not all(isinstance(p, str) and p for p in paths):
+        raise ComposeError(f"{compose_file}: malformed 'include' entry")
+    return paths
+
+
+def _read_compose(path: str, stack: Tuple[str, ...] = ()) -> dict:
+    """Read a compose file and recursively merge the files listed in its `include:`.
+
+    Relative paths inside included files are resolved against the included file's own
+    directory (as with Docker Compose). The same service/network/volume name defined in two
+    files is an error.
+    """
+    path = os.path.abspath(path)
+    if path in stack:
+        chain = " -> ".join(stack + (path,))
+        raise ComposeError(f"circular include: {chain}")
+    with open(path, encoding="utf-8") as fh:
+        raw = yaml.safe_load(fh)
+    if not isinstance(raw, dict):
+        raise ComposeError(f"{path}: not a valid compose file")
+    includes = raw.pop("include", None) or []
+    if not isinstance(includes, list):
+        raise ComposeError(f"{path}: 'include' must be a list")
+    base_dir = os.path.dirname(path)
+    for entry in includes:
+        for rel in _include_paths(entry, path):
+            inc_path = os.path.abspath(rel if os.path.isabs(rel) else os.path.join(base_dir, rel))
+            if not os.path.isfile(inc_path):
+                raise ComposeError(f"{path}: included file not found: {rel}")
+            included = _read_compose(inc_path, stack + (path,))
+            if os.path.dirname(inc_path) != base_dir:
+                _rebase_service_paths(included.get("services") or {}, os.path.dirname(inc_path))
+            for section in _MERGED_SECTIONS:
+                items = included.get(section) or {}
+                target = raw.setdefault(section, {})
+                if target is None:
+                    target = raw[section] = {}
+                for key, value in items.items():
+                    if key in target:
+                        raise ComposeError(
+                            f"{path}: {section[:-1]} {key!r} from {rel} conflicts with an "
+                            "existing definition"
+                        )
+                    target[key] = value
+    return raw
+
 
 def load_project(
     compose_file: str,
@@ -296,9 +385,8 @@ def load_project(
     env = dict(load_dotenv(dotenv_path))
     env.update(os.environ)  # process env wins
 
-    with open(compose_file, encoding="utf-8") as fh:
-        raw = yaml.safe_load(fh)
-    if not isinstance(raw, dict) or "services" not in raw:
+    raw = _read_compose(compose_file)
+    if "services" not in raw:
         raise ComposeError(f"{compose_file}: no 'services' section found")
     raw = interpolate_tree(raw, env)
 

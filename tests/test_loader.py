@@ -169,3 +169,56 @@ services:
     text = "\n".join(project.warnings)
     assert "privileged" in text
     assert "restart" in text
+
+
+def _write(path, text):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_include_merges_services_and_rebases_relative_paths(tmp_path):
+    _write(
+        tmp_path / "compose.yaml",
+        "include:\n  - svc/web.yaml\nservices:\n  db:\n    image: postgres\n",
+    )
+    _write(
+        tmp_path / "svc" / "web.yaml",
+        "services:\n  web:\n    image: nginx\n    volumes:\n      - ./html:/usr/share/nginx/html:ro\n"
+        "    env_file: ./web.env\n",
+    )
+    project = load_project(str(tmp_path / "compose.yaml"))
+    assert set(project.services) == {"db", "web"}
+    web = project.services["web"]
+    assert web.volumes[0].source == str(tmp_path / "svc" / "html")
+    assert web.env_files == [str(tmp_path / "svc" / "web.env")]
+
+
+def test_include_accepts_mapping_and_nested_includes(tmp_path):
+    _write(tmp_path / "compose.yaml", "include:\n  - path: a.yaml\nservices:\n  main:\n    image: x\n")
+    _write(tmp_path / "a.yaml", "include:\n  - b.yaml\nservices:\n  a:\n    image: x\n")
+    _write(tmp_path / "b.yaml", "services:\n  b:\n    image: x\n")
+    project = load_project(str(tmp_path / "compose.yaml"))
+    assert set(project.services) == {"main", "a", "b"}
+
+
+def test_include_only_file_without_own_services(tmp_path):
+    _write(tmp_path / "compose.yaml", "include:\n  - a.yaml\n")
+    _write(tmp_path / "a.yaml", "services:\n  a:\n    image: x\n")
+    assert set(load_project(str(tmp_path / "compose.yaml")).services) == {"a"}
+
+
+def test_include_conflict_missing_and_cycle(tmp_path):
+    _write(tmp_path / "compose.yaml", "include:\n  - a.yaml\nservices:\n  a:\n    image: y\n")
+    _write(tmp_path / "a.yaml", "services:\n  a:\n    image: x\n")
+    with pytest.raises(ComposeError, match="conflicts"):
+        load_project(str(tmp_path / "compose.yaml"))
+
+    _write(tmp_path / "missing.yaml", "include:\n  - nope.yaml\nservices:\n  m:\n    image: x\n")
+    with pytest.raises(ComposeError, match="not found"):
+        load_project(str(tmp_path / "missing.yaml"))
+
+    _write(tmp_path / "c1.yaml", "include:\n  - c2.yaml\nservices:\n  c1:\n    image: x\n")
+    _write(tmp_path / "c2.yaml", "include:\n  - c1.yaml\nservices:\n  c2:\n    image: x\n")
+    with pytest.raises(ComposeError, match="circular"):
+        load_project(str(tmp_path / "c1.yaml"))
