@@ -64,6 +64,9 @@ this to map each container to a compose service and to know what to stop in step
 curl -fsSL https://raw.githubusercontent.com/bacarndiaye/wslc-compose/main/install.sh | sh
 ```
 
+or, if you already have Python tooling, from [PyPI](https://pypi.org/project/wslc-compose/):
+`pipx install "wslc-compose==0.*"` (or `uv tool install` / `pip install --user`).
+
 If you already have a `docker-compose.yml` from Docker/Podman days, use it **unchanged**.
 Otherwise write one service per container from your step 1 inventory.
 
