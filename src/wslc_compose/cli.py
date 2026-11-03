@@ -89,13 +89,18 @@ def _project_containers(project: Project) -> List[dict]:
     entries = engine.list_project_containers(project.name)
     enriched = []
     for entry in entries:
-        data = engine.inspect(entry.get("Id") or entry.get("Name")) or {}
+        container_id = entry.get("Id") or entry.get("ID")
+        container_name = entry.get("Name") or entry.get("Names")
+        identifier = container_id or container_name
+        if not identifier:
+            continue
+        data = engine.inspect(identifier) or {}
         labels = data.get("Labels") or {}
         state = data.get("State") or {}
         enriched.append(
             {
-                "id": entry.get("Id"),
-                "name": entry.get("Name") or data.get("Name"),
+                "id": container_id,
+                "name": container_name or data.get("Name"),
                 "image": entry.get("Image") or data.get("Image"),
                 "service": labels.get(LABEL_SERVICE, ""),
                 "index": int(labels.get(LABEL_INDEX, "1") or 1),
@@ -109,6 +114,8 @@ def _project_containers(project: Project) -> List[dict]:
 
 
 def _format_ports(ports: List[dict]) -> str:
+    if isinstance(ports, str):
+        return ports
     parts = []
     for port in ports:
         proto = PROTOCOLS.get(port.get("Protocol"), str(port.get("Protocol", "")))
