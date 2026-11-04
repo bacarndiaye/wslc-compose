@@ -288,22 +288,32 @@ def _resolve_bind_source(source: str, project_dir: str) -> str:
     return source
 
 
-def _parse_depends_on(value) -> Tuple[List[str], List[str]]:
-    warnings: List[str] = []
+DEPENDS_ON_CONDITIONS = ("service_started", "service_healthy", "service_completed_successfully")
+
+
+def _parse_depends_on(value) -> Tuple[List[str], Dict[str, str]]:
+    """Return (dependency names, {name: condition}) for non-default conditions."""
     if value is None:
-        return [], warnings
+        return [], {}
     if isinstance(value, list):
-        return [str(v) for v in value], warnings
+        return [str(v) for v in value], {}
     if isinstance(value, dict):
-        deps = []
+        deps: List[str] = []
+        conditions: Dict[str, str] = {}
         for name, cfg in value.items():
-            deps.append(str(name))
+            name = str(name)
+            deps.append(name)
+            if cfg is not None and not isinstance(cfg, dict):
+                raise ComposeError(f"depends_on.{name}: expected a mapping")
             condition = (cfg or {}).get("condition", "service_started")
-            if condition not in ("service_started",):
-                warnings.append(
-                    f"depends_on condition {condition!r} on {name!r} is treated as service_started"
+            if condition not in DEPENDS_ON_CONDITIONS:
+                raise ComposeError(
+                    f"depends_on.{name}: unsupported condition {condition!r} "
+                    f"(expected one of: {', '.join(DEPENDS_ON_CONDITIONS)})"
                 )
-        return deps, warnings
+            if condition != "service_started":
+                conditions[name] = condition
+        return deps, conditions
     raise ComposeError("depends_on: expected list or mapping")
 
 
@@ -786,8 +796,10 @@ def load_project(
                     )
                 mount.source = project.volumes[mount.source].name
 
-        svc.depends_on, dep_warnings = _parse_depends_on(cfg.get("depends_on"))
-        project.warnings.extend(f"{svc_name}: {w}" for w in dep_warnings)
+        try:
+            svc.depends_on, svc.depends_on_conditions = _parse_depends_on(cfg.get("depends_on"))
+        except ComposeError as exc:
+            raise ComposeError(f"service {svc_name!r}: {exc}") from exc
 
         svc.hostname = cfg.get("hostname")
         svc.domainname = cfg.get("domainname")
@@ -857,5 +869,16 @@ def load_project(
             svc.gpus = str(cfg["gpus"])
 
         project.services[svc.name] = svc
+
+    for svc in project.services.values():
+        for dep, condition in svc.depends_on_conditions.items():
+            target = project.services.get(dep)
+            if target is None:
+                raise ComposeError(f"service {svc.name!r} depends on undefined service {dep!r}")
+            if condition == "service_healthy" and target.healthcheck and target.healthcheck.disabled:
+                raise ComposeError(
+                    f"service {svc.name!r}: depends_on {dep!r} is service_healthy but "
+                    f"{dep!r} disables its healthcheck"
+                )
 
     return project

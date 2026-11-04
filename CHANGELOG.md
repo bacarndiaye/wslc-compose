@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- `depends_on: condition: service_healthy` and `service_completed_successfully` are now
+  honored by `up`: dependents are created only once the dependency is healthy / has exited
+  with code 0. Fails fast when the dependency is unhealthy, exited, has no healthcheck or
+  exited non-zero. New `up --wait-timeout SEC` option.
+
+### Changed
+- An unknown `depends_on` condition is now an error instead of a warning.
+- `depends_on` on an undefined service is rejected when a condition is given.
+
 ## 0.3.3 — 2026-11-05
 
 ### Changed

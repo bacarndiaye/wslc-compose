@@ -85,6 +85,8 @@ class Service:
     # Endpoint addresses are reconciled against inspect, outside the shared v2 hash.
     network_ipv4_addresses: Dict[str, str] = field(default_factory=dict)
     depends_on: List[str] = field(default_factory=list)
+    # Start conditions per dependency; a dependency absent here means service_started.
+    depends_on_conditions: Dict[str, str] = field(default_factory=dict)
     hostname: Optional[str] = None
     domainname: Optional[str] = None
     dns: List[str] = field(default_factory=list)

@@ -37,6 +37,7 @@ Published on **[PyPI](https://pypi.org/project/wslc-compose/)** — [more instal
 - [Migrating an existing wslc setup](#migrating-an-existing-wslc-setup)
 - [Command reference](#command-reference)
 - [Compose file support](#compose-file-support)
+- [Waiting for dependencies](#waiting-for-dependencies)
 - [Secrets and configs](#secrets-and-configs)
 - [Variable interpolation](#variable-interpolation)
 - [Naming conventions and labels](#naming-conventions-and-labels)
@@ -225,6 +226,7 @@ Create networks and volumes, build missing images, then create/start containers 
 | `--force-recreate` | recreate containers even if their configuration is unchanged |
 | `--scale SERVICE=N` | override the number of replicas (repeatable) |
 | `-t, --timeout SEC` | stop timeout when recreating (default 10) |
+| `--wait-timeout SEC` | max wait for each `depends_on` condition (`service_healthy` / `service_completed_successfully`); default 0 = no limit |
 
 Without `-d`, logs of the started services are followed after startup; `Ctrl+C`
 detaches **without stopping the containers**.
@@ -306,7 +308,7 @@ Show the wslc-compose and wslc versions.
 | `tmpfs` (top-level list or `type: tmpfs`) | `--tmpfs` |
 | Multiple `networks`, per-endpoint `aliases` / `ipv4_address`, `external: true`, custom `name:` | Native `create`, `network connect`, `start`; one-network services use `run` |
 | Network `driver`, `driver_opts`, `labels`, `internal`, IPv4 IPAM `subnet` / `gateway` / `ip_range` | `network create --driver --opt --internal --subnet --gateway --ip-range` |
-| `depends_on` (list & map) | topological start/creation order (`condition:` is treated as `service_started`, see [limitations](#known-wslc-preview-limitations)) |
+| `depends_on` (list & map) | topological start/creation order; `condition: service_healthy` and `service_completed_successfully` are honored (see [Waiting for dependencies](#waiting-for-dependencies)) |
 | `healthcheck` (`test`, `interval`, `timeout`, `start_period`, `retries`, `disable`) | `--health-cmd`, `--health-interval`, `--health-timeout`, `--health-start-period`, `--health-retries`, `--no-healthcheck` — the status shows in `ps` as `(healthy)` / `(unhealthy)` |
 | `deploy.replicas` | number of containers (see also `--scale`) |
 | `deploy.resources.limits.cpus` / `.memory`, `cpus`, `mem_limit` | `--cpus`, `-m` |
@@ -331,6 +333,43 @@ configs, undefined secret/config references, `build.secrets`, duplicate service/
 names across `include`d files, circular or missing includes, anonymous volumes
 (`- /data` without a source), references to undeclared networks/volumes, circular
 `depends_on`, scaling a service that sets `container_name`.
+
+## Waiting for dependencies
+
+`depends_on` conditions are honored by `up`: a service is only created once the conditions
+of its dependencies are met.
+
+```yaml
+services:
+  db:
+    image: postgres:16
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      retries: 10
+  migrate:
+    image: my-app
+    command: ["./migrate"]
+    depends_on:
+      db: {condition: service_healthy}
+  web:
+    image: my-app
+    depends_on:
+      db: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+```
+
+| Condition | `up` waits until… |
+|---|---|
+| `service_started` (default) | the dependency container has been started |
+| `service_healthy` | its healthcheck reports `healthy` (all replicas) |
+| `service_completed_successfully` | it has exited with code 0 |
+
+`up` stops with an error as soon as a condition can never be met: the dependency is
+`unhealthy`, has exited, has **no healthcheck** (define one in the compose file or the image),
+or exited non-zero. Use `--wait-timeout SEC` to bound each wait. Dependencies that are not
+part of the `up` (other profiles, scaled to 0) are not waited on, and `--dry-run` only prints
+what it would wait for.
 
 ## Secrets and configs
 
@@ -543,9 +582,6 @@ services. `/etc/hosts` writing still uses root after startup until WSLC exposes 
 
 - **`restart:` policies** — no wslc equivalent yet; ignored (a `restart` after reboot
   is manual: `wslc compose up -d`).
-- **`depends_on: condition: service_healthy` / `service_completed_successfully`** — not
-  honored: the dependency is only waited on until it is *started*, not healthy (a warning
-  is printed). `healthcheck` itself **is** supported and reported by `ps`.
 - **One IPv4 IPAM subnet per network**, without IPv6/custom IPAM or auxiliary
   address reservations (see [Networking](#networking)). Multiple networks per container are supported.
 - **Session mount limit**: the current preview caps mounted volumes at ~15 per WSL
