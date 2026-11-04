@@ -5,11 +5,12 @@
 #   curl -fsSL https://raw.githubusercontent.com/bacarndiaye/wslc-compose/main/install.sh | sh
 #
 # Environment:
-#   WSLC_COMPOSE_SOURCE  package to install (default: the GitHub repo;
-#                        set it to a local checkout path to install from source)
+#   WSLC_COMPOSE_SOURCE  package to install (default: the latest 0.x release from PyPI;
+#                        set it to git+https://github.com/bacarndiaye/wslc-compose for
+#                        unreleased changes, or to a local checkout path)
 set -eu
 
-SOURCE="${WSLC_COMPOSE_SOURCE:-git+https://github.com/bacarndiaye/wslc-compose}"
+SOURCE="${WSLC_COMPOSE_SOURCE:-wslc-compose==0.*}"
 
 say() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 fail() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }

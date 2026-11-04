@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- `install.sh` / `install.ps1` now install the latest 0.x release from PyPI by default
+  instead of the Git `main` branch. Set `WSLC_COMPOSE_SOURCE=git+https://github.com/bacarndiaye/wslc-compose`
+  to get unreleased changes.
+
 ## 0.3.2 — 2026-11-05
 
 ### Documentation
