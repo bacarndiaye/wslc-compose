@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.3 — 2026-11-05
 
 ### Changed
 - `install.sh` / `install.ps1` now install the latest 0.x release from PyPI by default
