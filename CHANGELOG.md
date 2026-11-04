@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.2 — 2026-11-05
+
+### Documentation
+- PyPI is now the primary installation method: `pipx install "wslc-compose==0.*"` leads the
+  README, the landing page and the migration guide, with upgrade commands and the one-line
+  installer documented as a fallback (#20).
+- README pin example updated to `==0.3.1` (#19); the PyPI project page now shows the
+  refreshed README.
+
 ## 0.3.1 — 2026-11-03
 
 ### Fixed
