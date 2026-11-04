@@ -243,16 +243,19 @@
     <strong>compose.yaml you already use</strong> with Docker or Podman. No daemon, no lock-in.
   </p>
   <div class="install">
-    <code><span class="p">$</span> curl -fsSL https://raw.githubusercontent.com/bacarndiaye/wslc-compose/main/install.sh | sh</code>
-    <button onclick="navigator.clipboard.writeText('curl -fsSL https://raw.githubusercontent.com/bacarndiaye/wslc-compose/main/install.sh | sh').then(()=>{this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500)})">Copy</button>
+    <code><span class="p">$</span> pipx install "wslc-compose==0.*"</code>
+    <button onclick="navigator.clipboard.writeText('pipx install &quot;wslc-compose==0.*&quot;').then(()=>{this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500)})">Copy</button>
   </div>
-  <div class="install">
-    <code><span class="p">$</span> pip install "wslc-compose==0.*"</code>
-    <button onclick="navigator.clipboard.writeText('pip install &quot;wslc-compose==0.*&quot;').then(()=>{this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500)})">Copy</button>
-  </div>
-  <p class="tag" style="font-size:.9rem">Also on <a href="https://pypi.org/project/wslc-compose/">PyPI</a> (pipx, uv, pip).</p>
+  <p class="tag" style="font-size:.95rem; margin-bottom:26px">
+    <a href="https://pypi.org/project/wslc-compose/"><img alt="PyPI version" style="vertical-align:middle" src="https://img.shields.io/pypi/v/wslc-compose.svg"></a>
+    Available on <a href="https://pypi.org/project/wslc-compose/"><strong>PyPI</strong></a> —
+    also <code>uv tool install "wslc-compose==0.*"</code> or <code>pip install --user "wslc-compose==0.*"</code>.<br>
+    No pip or pipx on your distro? Use the
+    <a href="https://github.com/bacarndiaye/wslc-compose#one-liner-no-pip-venv-or-pipx-on-your-distro">one-line installer</a>.
+  </p>
   <div class="cta-row">
-    <a class="btn primary" href="https://github.com/bacarndiaye/wslc-compose#quick-start">Get started</a>
+    <a class="btn primary" href="https://pypi.org/project/wslc-compose/">Install from PyPI</a>
+    <a class="btn ghost" href="https://github.com/bacarndiaye/wslc-compose#quick-start">Quick start</a>
     <a class="btn ghost" href="https://github.com/bacarndiaye/wslc-compose/blob/main/docs/MIGRATION.md">Migrate an existing wslc setup</a>
   </div>
 </div>

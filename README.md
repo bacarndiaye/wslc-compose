@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/bacarndiaye/wslc-compose/actions/workflows/ci.yml/badge.svg)](https://github.com/bacarndiaye/wslc-compose/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/wslc-compose.svg)](https://pypi.org/project/wslc-compose/)
+[![PyPI downloads](https://img.shields.io/pypi/dm/wslc-compose.svg)](https://pypi.org/project/wslc-compose/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 
@@ -16,6 +17,14 @@ and a Docker-compatible API endpoint in [microsoft/WSL#40976](https://github.com
 `compose.yaml` you already use with Docker or Podman, and it drives `wslc` for you —
 networks with DNS, named volumes, bind mounts, dependency ordering, project-scoped
 naming, config-drift detection and scaling included.
+
+## Install in one line
+
+```console
+pipx install "wslc-compose==0.*"      # or: uv tool install "wslc-compose==0.*" / pip install --user "wslc-compose==0.*"
+```
+
+Published on **[PyPI](https://pypi.org/project/wslc-compose/)** — [more install options](#installation).
 
 ---
 
@@ -74,28 +83,11 @@ Two executables are installed:
 - **Windows 11** with the **WSL container preview** installed — `wslc` must work in a
   terminal. See the [official documentation](https://learn.microsoft.com/windows/wsl/wsl-container).
 - **Python ≥ 3.9**, inside a WSL distro or on Windows.
-  (No pip/venv on your distro? The installer below handles that.)
+  (No pip/venv on your distro? The [one-liner installer](#one-liner-no-pip-venv-or-pipx-on-your-distro) handles that.)
 
 ## Installation
 
-### One-liner (recommended)
-
-Works even on WSL distros without `pip`, `venv` or `pipx` — it bootstraps a standalone
-[uv](https://docs.astral.sh/uv/) if no Python package manager is found:
-
-```console
-curl -fsSL https://raw.githubusercontent.com/bacarndiaye/wslc-compose/main/install.sh | sh
-```
-
-On Windows PowerShell:
-
-```powershell
-irm https://raw.githubusercontent.com/bacarndiaye/wslc-compose/main/install.ps1 | iex
-```
-
-Commands are installed into `~/.local/bin` (make sure it is on your `PATH`).
-
-### From PyPI
+### From PyPI (recommended)
 
 [`wslc-compose` is published on PyPI](https://pypi.org/project/wslc-compose/). Pin the
 0.x series so a future breaking 1.0 never lands by surprise:
@@ -109,6 +101,28 @@ pip install --user "wslc-compose==0.*"
 ```
 
 (drop the `==0.*` to always get the latest release, or use `==0.3.1` to pin exactly.)
+
+Upgrade later with `pipx upgrade wslc-compose` (or `uv tool upgrade wslc-compose` /
+`pip install --user -U "wslc-compose==0.*"`).
+
+### One-liner (no pip, venv or pipx on your distro)
+
+If your WSL distro has no Python package manager, this installer bootstraps a standalone
+[uv](https://docs.astral.sh/uv/). It installs from the GitHub repo by default; set
+`WSLC_COMPOSE_SOURCE` to get the PyPI release instead:
+
+```console
+curl -fsSL https://raw.githubusercontent.com/bacarndiaye/wslc-compose/main/install.sh \
+  | WSLC_COMPOSE_SOURCE='wslc-compose==0.*' sh
+```
+
+On Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/bacarndiaye/wslc-compose/main/install.ps1 | iex
+```
+
+Commands are installed into `~/.local/bin` (make sure it is on your `PATH`).
 
 ### From Git (unreleased changes)
 
