@@ -108,12 +108,18 @@ Upgrade later with `pipx upgrade wslc-compose` (or `uv tool upgrade wslc-compose
 ### One-liner (no pip, venv or pipx on your distro)
 
 If your WSL distro has no Python package manager, this installer bootstraps a standalone
-[uv](https://docs.astral.sh/uv/). It installs from the GitHub repo by default; set
-`WSLC_COMPOSE_SOURCE` to get the PyPI release instead:
+[uv](https://docs.astral.sh/uv/) and installs the latest 0.x release from PyPI:
+
+```console
+curl -fsSL https://raw.githubusercontent.com/bacarndiaye/wslc-compose/main/install.sh | sh
+```
+
+To install unreleased changes from the repository instead, set `WSLC_COMPOSE_SOURCE`
+(it also accepts a local checkout path):
 
 ```console
 curl -fsSL https://raw.githubusercontent.com/bacarndiaye/wslc-compose/main/install.sh \
-  | WSLC_COMPOSE_SOURCE='wslc-compose==0.*' sh
+  | WSLC_COMPOSE_SOURCE='git+https://github.com/bacarndiaye/wslc-compose' sh
 ```
 
 On Windows PowerShell:

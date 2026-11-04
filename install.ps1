@@ -10,8 +10,9 @@
         irm https://raw.githubusercontent.com/bacarndiaye/wslc-compose/main/install.ps1 | iex
 
     Environment:
-        WSLC_COMPOSE_SOURCE  package to install (default: the GitHub repo;
-                             set it to a local checkout path to install from source)
+        WSLC_COMPOSE_SOURCE  package to install (default: the latest 0.x release from PyPI;
+                             set it to git+https://github.com/bacarndiaye/wslc-compose for
+                             unreleased changes, or to a local checkout path)
 #>
 
 $ErrorActionPreference = 'Stop'
@@ -20,7 +21,7 @@ Set-StrictMode -Version Latest
 $Source = if ($env:WSLC_COMPOSE_SOURCE) {
     $env:WSLC_COMPOSE_SOURCE
 } else {
-    'git+https://github.com/bacarndiaye/wslc-compose'
+    'wslc-compose==0.*'
 }
 
 function Write-Say {
