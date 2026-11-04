@@ -270,3 +270,43 @@ def test_ps_uses_docker_compose_minimum_column_width(capsys):
     cli._print_table([], ["NAME", "IMAGE", "COMMAND", "SERVICE", "CREATED", "STATUS", "PORTS"])
 
     assert capsys.readouterr().out == "NAME      IMAGE     COMMAND   SERVICE   CREATED   STATUS    PORTS\n"
+
+
+def test_up_waits_for_conditional_dependency_before_starting_dependent(monkeypatch):
+    db = Service(name="db", image="fixture")
+    web = Service(name="web", image="fixture", depends_on=["db"],
+                  depends_on_conditions={"db": "service_healthy"})
+    project = Project(name="demo", directory=".", services={"db": db, "web": web})
+    events = []
+    ns = SimpleNamespace(
+        services=[], profile=[], scale=[], dry_run=False, build=False,
+        force_recreate=False, timeout=10, detach=True, wait_timeout=42,
+    )
+    monkeypatch.setattr(cli, "_load", lambda _: project)
+    monkeypatch.setattr(cli, "_project_containers", lambda *_, **__: [])
+    monkeypatch.setattr(cli.engine, "run", lambda args, **_: events.append(("run", args[-1] if args[0] != "run" else "run")))
+    monkeypatch.setattr(cli.host_gateway, "reconcile", lambda *a, **k: None)
+    monkeypatch.setattr(cli.networking, "verify_container", lambda *a, **k: None)
+    monkeypatch.setattr(cli.dependencies, "wait_for_dependencies",
+                        lambda proj, svc, selected, **kw: events.append(("wait", svc.name, kw["timeout"])))
+
+    assert cli.cmd_up(ns) == 0
+    kinds = [e[0] for e in events]
+    assert kinds == ["run", "wait", "run"]  # db started, then wait, then web started
+    assert events[1] == ("wait", "web", 42)
+
+
+def test_up_dry_run_does_not_wait(monkeypatch, capsys):
+    db = Service(name="db", image="fixture")
+    web = Service(name="web", image="fixture", depends_on=["db"],
+                  depends_on_conditions={"db": "service_healthy"})
+    project = Project(name="demo", directory=".", services={"db": db, "web": web})
+    ns = SimpleNamespace(
+        services=[], profile=[], scale=[], dry_run=True, build=False,
+        force_recreate=False, timeout=10, detach=True,
+    )
+    monkeypatch.setattr(cli, "_load", lambda _: project)
+    monkeypatch.setattr(cli.dependencies, "wait_for_dependencies",
+                        lambda *a, **k: pytest.fail("dry run must not wait"))
+    assert cli.cmd_up(ns) == 0
+    assert "would wait for db: service_healthy" in capsys.readouterr().out

@@ -21,6 +21,7 @@ from wslc_compose import (
     LABEL_PROJECT,
     LABEL_SERVICE,
     __version__,
+    dependencies,
     engine,
     flags,
     host_gateway,
@@ -291,6 +292,16 @@ def cmd_up(ns: argparse.Namespace) -> int:
                 f"{svc.name}: cannot scale a service with container_name set"
             )
         desired_hash = svc.config_hash(project)
+        if svc.depends_on_conditions and replicas > 0:
+            if ns.dry_run:
+                for dep, condition in svc.depends_on_conditions.items():
+                    _info(f"(dry run) would wait for {dep}: {condition}")
+            else:
+                dependencies.wait_for_dependencies(
+                    project, svc, services, timeout=getattr(ns, "wait_timeout", 0) or 0,
+                    log=_info,
+                    replicas={s.name: scale.get(s.name, s.replicas) for s in services},
+                )
         for index in range(1, replicas + 1):
             host_gateway.reconcile(project, ns.dry_run, previously_enabled=gateway_known)
             cname = project.container_name(svc, index)
@@ -616,6 +627,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--force-recreate", action="store_true")
     p.add_argument("--scale", action="append", metavar="SERVICE=N")
     p.add_argument("-t", "--timeout", type=int, default=10)
+    p.add_argument("--wait-timeout", type=int, default=0, metavar="SECONDS",
+                   help="max seconds to wait for each depends_on condition "
+                        "(service_healthy / service_completed_successfully); 0 = no limit")
     p.set_defaults(func=cmd_up)
 
     p = sub.add_parser("down", help="stop and remove project containers and networks")

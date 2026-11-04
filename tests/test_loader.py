@@ -660,10 +660,56 @@ def test_healthcheck_is_supported_without_warning(tmp_path):
     assert not any("healthcheck" in w for w in project.warnings)
 
 
-def test_depends_on_service_healthy_still_warns(tmp_path):
-    (tmp_path / "compose.yaml").write_text(
-        "services:\n  a:\n    image: x\n  b:\n    image: x\n    depends_on:\n"
+def _deps(tmp_path, body):
+    (tmp_path / "compose.yaml").write_text(body)
+    return load_project(str(tmp_path / "compose.yaml"))
+
+
+def test_depends_on_conditions_are_parsed_without_warning(tmp_path):
+    project = _deps(
+        tmp_path,
+        "services:\n  a:\n    image: x\n  m:\n    image: x\n  b:\n    image: x\n    depends_on:\n"
         "      a:\n        condition: service_healthy\n"
+        "      m:\n        condition: service_completed_successfully\n",
     )
-    project = load_project(str(tmp_path / "compose.yaml"))
-    assert any("service_healthy" in w for w in project.warnings)
+    web = project.services["b"]
+    assert web.depends_on == ["a", "m"]
+    assert web.depends_on_conditions == {
+        "a": "service_healthy", "m": "service_completed_successfully"}
+    assert not any("depends_on" in w for w in project.warnings)
+
+
+def test_depends_on_default_condition_is_not_recorded(tmp_path):
+    project = _deps(
+        tmp_path,
+        "services:\n  a:\n    image: x\n  b:\n    image: x\n    depends_on:\n"
+        "      a:\n        condition: service_started\n",
+    )
+    assert project.services["b"].depends_on_conditions == {}
+
+
+def test_depends_on_unknown_condition_is_rejected(tmp_path):
+    with pytest.raises(ComposeError, match="unsupported condition 'service_ready'"):
+        _deps(
+            tmp_path,
+            "services:\n  a:\n    image: x\n  b:\n    image: x\n    depends_on:\n"
+            "      a:\n        condition: service_ready\n",
+        )
+
+
+def test_service_healthy_on_disabled_healthcheck_is_rejected(tmp_path):
+    with pytest.raises(ComposeError, match="disables its healthcheck"):
+        _deps(
+            tmp_path,
+            "services:\n  a:\n    image: x\n    healthcheck:\n      disable: true\n"
+            "  b:\n    image: x\n    depends_on:\n      a:\n        condition: service_healthy\n",
+        )
+
+
+def test_conditional_dependency_on_undefined_service_is_rejected(tmp_path):
+    with pytest.raises(ComposeError, match="undefined service 'ghost'"):
+        _deps(
+            tmp_path,
+            "services:\n  b:\n    image: x\n    depends_on:\n      ghost:\n"
+            "        condition: service_healthy\n",
+        )
