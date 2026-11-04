@@ -101,7 +101,7 @@ uv tool install "wslc-compose==0.*"
 pip install --user "wslc-compose==0.*"
 ```
 
-(drop the `==0.*` to always get the latest release, or use `==0.3.1` to pin exactly.)
+(drop the `==0.*` to always get the latest release, or use `==0.4.0` to pin exactly.)
 
 Upgrade later with `pipx upgrade wslc-compose` (or `uv tool upgrade wslc-compose` /
 `pip install --user -U "wslc-compose==0.*"`).
