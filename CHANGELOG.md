@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 — 2026-11-05
 
 ### Added
 - `depends_on: condition: service_healthy` and `service_completed_successfully` are now
@@ -11,6 +11,9 @@
 ### Changed
 - An unknown `depends_on` condition is now an error instead of a warning.
 - `depends_on` on an undefined service is rejected when a condition is given.
+
+### Documentation
+- Landing page: new feature cards (healthchecks, multiple files/include, secrets/configs), healthcheck row corrected, version badge.
 
 ## 0.3.3 — 2026-11-05
 

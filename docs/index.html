@@ -233,7 +233,7 @@
 
 <div class="hero wrap">
   <div class="badge-row">
-    <span class="pill">Python ≥ 3.9 · MIT</span>
+    <span class="pill">v0.4.0 · Python ≥ 3.9 · MIT</span>
     <span class="pill green">Works with the WSL container preview today</span>
   </div>
   <h1><span class="grad">docker-compose</span> for<br>WSL containers</h1>
@@ -326,8 +326,8 @@ my-project-web-1   web      nginx:alpine  running  <span class="hl">0.0.0.0:8080
         <p>Named volumes created on demand; Linux bind-mount paths translated to the Windows paths wslc requires (<code>wslpath -w</code>) automatically.</p></div>
       <div class="card"><div class="ico">🧱</div><h3>Builds</h3>
         <p><code>build:</code> with context, dockerfile, args, target — images tagged <code>&lt;project&gt;-&lt;service&gt;</code>, rebuilt only when missing or on <code>--build</code>.</p></div>
-      <div class="card"><div class="ico">🔀</div><h3>Dependency ordering</h3>
-        <p><code>depends_on</code> topological sort for start and creation order, circular dependencies rejected up front.</p></div>
+      <div class="card"><div class="ico">🔀</div><h3>Dependency ordering &amp; health</h3>
+        <p><code>depends_on</code> start order, plus <code>condition: service_healthy</code> and <code>service_completed_successfully</code> — <code>up</code> waits for the database to be ready before starting the app (new in 0.4).</p></div>
       <div class="card"><div class="ico">♻️</div><h3>Config-drift detection</h3>
         <p><code>up</code> is idempotent: it recreates only the services whose resolved configuration actually changed, and leaves the rest running.</p></div>
       <div class="card"><div class="ico">📈</div><h3>Scaling &amp; profiles</h3>
@@ -336,6 +336,12 @@ my-project-web-1   web      nginx:alpine  running  <span class="hl">0.0.0.0:8080
         <p><code>up · down · ps · logs -f · exec · build · pull · config</code> — plus a <code>wslc</code> wrapper so it feels exactly like <code>docker compose</code>.</p></div>
       <div class="card"><div class="ico">🔍</div><h3>Transparent</h3>
         <p><code>--dry-run</code> on any command prints every wslc invocation. Unsupported keys warn instead of failing, so existing files keep working.</p></div>
+      <div class="card"><div class="ico">🩺</div><h3>Healthchecks</h3>
+        <p><code>healthcheck</code> is mapped to wslc <code>--health-*</code> options and shown by <code>ps</code> as <code>(healthy)</code> / <code>(unhealthy)</code>.</p></div>
+      <div class="card"><div class="ico">📦</div><h3>Multiple files &amp; include</h3>
+        <p>Overlay files with repeated <code>-f</code> or <code>COMPOSE_FILE</code>, and split big projects with <code>include:</code>, like <code>docker compose</code>.</p></div>
+      <div class="card"><div class="ico">🔐</div><h3>Secrets &amp; configs</h3>
+        <p>File-backed <code>secrets</code> and <code>configs</code> are mounted read-only into containers; multiple networks with static IPs and aliases are supported too.</p></div>
       <div class="card"><div class="ico">🚑</div><h3>Preview-proof docs</h3>
         <p>The sharp edges of the wslc preview — per-elevation sessions, mount limits, wedged sessions — documented with tested recovery steps.</p></div>
     </div>
@@ -355,7 +361,9 @@ my-project-web-1   web      nginx:alpine  running  <span class="hl">0.0.0.0:8080
         <tr><td><code>networks</code>, <code>aliases</code>, <code>external</code></td><td class="ok">✓ &nbsp;<code>wslc network create</code>, <code>--network-alias</code></td></tr>
         <tr><td><code>environment</code>, <code>env_file</code>, <code>${VAR}</code></td><td class="ok">✓ &nbsp;full docker-compose interpolation rules</td></tr>
         <tr><td><code>depends_on</code>, <code>deploy.replicas</code>, <code>profiles</code></td><td class="ok">✓ &nbsp;ordering, service_healthy / completed_successfully waits, scaling, opt-in services</td></tr>
-        <tr><td><code>restart</code>, <code>healthcheck</code>, <code>privileged</code>, …</td><td>⚠ &nbsp;no wslc equivalent yet — warned, not fatal</td></tr>
+        <tr><td><code>healthcheck</code></td><td class="ok">✓ &nbsp;<code>--health-cmd</code>, <code>--health-interval</code>, …</td></tr>
+        <tr><td><code>secrets</code>, <code>configs</code> (file-backed), <code>include</code></td><td class="ok">✓ &nbsp;read-only mounts, per-file path rebasing</td></tr>
+        <tr><td><code>restart</code>, <code>privileged</code>, …</td><td>⚠ &nbsp;no wslc equivalent yet — warned, not fatal</td></tr>
       </table>
     </div>
     <div class="callout">
