@@ -757,13 +757,24 @@ install.sh          curl-able installer, bootstraps uv when pip/pipx are missing
 ```console
 git clone https://github.com/bacarndiaye/wslc-compose
 cd wslc-compose
+python3 -m venv .venv && . .venv/bin/activate     # required on Debian/Ubuntu (PEP 668)
 pip install -e . pytest ruff      # or the uv equivalent
 pytest                            # unit tests, no wslc required
-ruff check src tests
+ruff check src tests scripts
 wslc-compose --dry-run -f examples/demo/compose.yaml up -d   # inspect generated commands
 ```
 
 CI runs the test matrix (Python 3.9 / 3.12 / 3.14) and ruff on every push and PR.
+
+### Releasing
+
+```console
+python scripts/bump_version.py 0.5.0    # pyproject, __init__, README/MIGRATION/landing-page pins, CHANGELOG heading
+python scripts/bump_version.py --check  # fails if a doc pin differs from pyproject.toml (also run by pytest)
+```
+
+Open a PR with the bump, merge it, then publish a GitHub release `v0.5.0`: the
+`publish.yml` workflow uploads it to PyPI through Trusted Publishing.
 
 Issues and PRs are welcome — especially reports of wslc preview behavior changes,
 since the CLI surface is still evolving.
