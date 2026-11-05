@@ -36,7 +36,7 @@ bootstrap_uv() {
     echo "$UV_DIR/uv"
 }
 
-command -v curl >/dev/null 2>&1 || fail "curl is required"
+command -v curl >/dev/null 2>&1 || fail "curl is required (Debian/Ubuntu: sudo apt install curl)"
 
 if command -v pipx >/dev/null 2>&1; then
     install_with_pipx

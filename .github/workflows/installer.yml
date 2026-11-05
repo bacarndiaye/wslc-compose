@@ -1,0 +1,34 @@
+name: Installer
+
+# install.sh must keep working on a stock Debian whose system Python is
+# "externally managed" (PEP 668) and ships neither pipx nor uv.
+on:
+  push:
+    branches: [main]
+    paths: [install.sh, .github/workflows/installer.yml]
+  pull_request:
+    paths: [install.sh, .github/workflows/installer.yml]
+  workflow_dispatch:
+
+jobs:
+  debian:
+    runs-on: ubuntu-latest
+    container: debian:bookworm-slim
+    steps:
+      - run: apt-get update && apt-get install -y --no-install-recommends curl ca-certificates python3 python3-pip
+      - uses: actions/checkout@v4
+      - name: Plain pip is blocked, as on a user's machine
+        run: |
+          if python3 -m pip install --dry-run wslc-compose 2>&1 | grep -q externally-managed-environment; then
+            echo "PEP 668 confirmed"
+          else
+            echo "::warning::system Python is not externally managed in this image"
+          fi
+      - name: Run the installer from the checkout
+        run: sh install.sh
+      - name: Commands work
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          wslc-compose --version
+          wslc --help >/dev/null 2>&1 || true
+          wslc-compose --version | grep -E '^wslc-compose [0-9]+\.[0-9]+\.[0-9]+$'
