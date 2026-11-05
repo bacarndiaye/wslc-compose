@@ -233,7 +233,7 @@
 
 <div class="hero wrap">
   <div class="badge-row">
-    <span class="pill">v0.4.0 · Python ≥ 3.9 · MIT</span>
+    <span class="pill"><span id="latest-version">v0.4.0</span> · Python ≥ 3.9 · MIT</span>
     <span class="pill green">Works with the WSL container preview today</span>
   </div>
   <h1><span class="grad">docker-compose</span> for<br>WSL containers</h1>
@@ -247,6 +247,7 @@
     <button onclick="navigator.clipboard.writeText('pipx install &quot;wslc-compose==0.*&quot;').then(()=>{this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500)})">Copy</button>
   </div>
   <p class="tag" style="font-size:.95rem; margin-bottom:26px">
+    <a href="https://github.com/bacarndiaye/wslc-compose/releases/latest"><img alt="Latest release" style="vertical-align:middle" src="https://img.shields.io/github/v/release/bacarndiaye/wslc-compose?label=latest%20release"></a>
     <a href="https://pypi.org/project/wslc-compose/"><img alt="PyPI version" style="vertical-align:middle" src="https://img.shields.io/pypi/v/wslc-compose.svg"></a>
     Available on <a href="https://pypi.org/project/wslc-compose/"><strong>PyPI</strong></a> —
     also <code>uv tool install "wslc-compose==0.*"</code> or <code>pip install --user "wslc-compose==0.*"</code>.<br>
@@ -388,5 +389,14 @@ my-project-web-1   web      nginx:alpine  running  <span class="hl">0.0.0.0:8080
   </div>
 </footer>
 
+<script>
+  // Keep the hero pill on the latest GitHub release tag (static text is the fallback).
+  fetch('https://api.github.com/repos/bacarndiaye/wslc-compose/releases/latest')
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (d) {
+      if (d && d.tag_name) document.getElementById('latest-version').textContent = d.tag_name;
+    })
+    .catch(function () {});
+</script>
 </body>
 </html>

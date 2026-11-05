@@ -1,6 +1,7 @@
 # wslc-compose
 
 [![CI](https://github.com/bacarndiaye/wslc-compose/actions/workflows/ci.yml/badge.svg)](https://github.com/bacarndiaye/wslc-compose/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/bacarndiaye/wslc-compose?label=release)](https://github.com/bacarndiaye/wslc-compose/releases/latest)
 [![PyPI](https://img.shields.io/pypi/v/wslc-compose.svg)](https://pypi.org/project/wslc-compose/)
 [![PyPI downloads](https://img.shields.io/pypi/dm/wslc-compose.svg)](https://pypi.org/project/wslc-compose/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -24,7 +25,7 @@ naming, config-drift detection and scaling included.
 pipx install "wslc-compose==0.*"      # or: uv tool install "wslc-compose==0.*" / pip install --user "wslc-compose==0.*"
 ```
 
-Published on **[PyPI](https://pypi.org/project/wslc-compose/)** — [more install options](#installation).
+Latest release: [![Latest release](https://img.shields.io/github/v/release/bacarndiaye/wslc-compose?label=)](https://github.com/bacarndiaye/wslc-compose/releases/latest) — published on **[PyPI](https://pypi.org/project/wslc-compose/)** · [more install options](#installation).
 
 ---
 
