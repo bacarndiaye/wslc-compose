@@ -780,7 +780,7 @@ ruff check src tests scripts
 wslc-compose --dry-run -f examples/demo/compose.yaml up -d   # inspect generated commands
 ```
 
-CI runs the test matrix (Python 3.9 / 3.12 / 3.14) and ruff on every push and PR.
+CI runs the test matrix (Python 3.9 / 3.12 / 3.14 on Linux, 3.9 / 3.13 on Windows) and ruff on every push and PR.
 
 ### Releasing
 
