@@ -61,10 +61,10 @@ this to map each container to a compose service and to know what to stop in step
 ## Step 2 — Install wslc-compose and prepare the compose file
 
 ```console
-pipx install "wslc-compose==0.*"      # from PyPI
+pipx install "wslc-compose==0.4.0"      # from PyPI
 ```
 
-(or `uv tool install "wslc-compose==0.*"` / `pip install --user "wslc-compose==0.*"`;
+(or `uv tool install "wslc-compose==0.4.0"` / `pip install --user "wslc-compose==0.4.0"`;
 [wslc-compose on PyPI](https://pypi.org/project/wslc-compose/)). No pip on your distro?
 Use the one-liner installer instead:
 

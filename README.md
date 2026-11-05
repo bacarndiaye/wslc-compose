@@ -22,7 +22,7 @@ naming, config-drift detection and scaling included.
 ## Install in one line
 
 ```console
-pipx install "wslc-compose==0.*"      # or: uv tool install "wslc-compose==0.*" / pip install --user "wslc-compose==0.*"
+pipx install "wslc-compose==0.4.0"      # or: uv tool install "wslc-compose==0.4.0" / pip install --user "wslc-compose==0.4.0"
 ```
 
 Latest release: [![Latest release](https://img.shields.io/github/v/release/bacarndiaye/wslc-compose?label=)](https://github.com/bacarndiaye/wslc-compose/releases/latest) — published on **[PyPI](https://pypi.org/project/wslc-compose/)** · [more install options](#installation).
@@ -91,21 +91,21 @@ Two executables are installed:
 
 ### From PyPI (recommended)
 
-[`wslc-compose` is published on PyPI](https://pypi.org/project/wslc-compose/). Pin the
-0.x series so a future breaking 1.0 never lands by surprise:
+[`wslc-compose` is published on PyPI](https://pypi.org/project/wslc-compose/). Pinning the
+version keeps a future breaking 1.0 from landing by surprise:
 
 ```console
-pipx install "wslc-compose==0.*"
+pipx install "wslc-compose==0.4.0"
 # or
-uv tool install "wslc-compose==0.*"
+uv tool install "wslc-compose==0.4.0"
 # or
-pip install --user "wslc-compose==0.*"
+pip install --user "wslc-compose==0.4.0"
 ```
 
-(drop the `==0.*` to always get the latest release, or use `==0.4.0` to pin exactly.)
+(`0.4.0` is the latest release. Use `==0.*` instead to follow the 0.x series automatically, or drop the version to always get the newest.)
 
 Upgrade later with `pipx upgrade wslc-compose` (or `uv tool upgrade wslc-compose` /
-`pip install --user -U "wslc-compose==0.*"`).
+`pip install --user -U wslc-compose`).
 
 ### One-liner (no pip, venv or pipx on your distro)
 

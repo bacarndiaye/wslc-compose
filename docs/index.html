@@ -243,14 +243,14 @@
     <strong>compose.yaml you already use</strong> with Docker or Podman. No daemon, no lock-in.
   </p>
   <div class="install">
-    <code><span class="p">$</span> pipx install "wslc-compose==0.*"</code>
-    <button onclick="navigator.clipboard.writeText('pipx install &quot;wslc-compose==0.*&quot;').then(()=>{this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500)})">Copy</button>
+    <code><span class="p">$</span> pipx install "wslc-compose==<span class="ver">0.4.0</span>"</code>
+    <button onclick="navigator.clipboard.writeText('pipx install &quot;wslc-compose=='+document.querySelector('.ver').textContent+'&quot;').then(()=>{this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500)})">Copy</button>
   </div>
   <p class="tag" style="font-size:.95rem; margin-bottom:26px">
     <a href="https://github.com/bacarndiaye/wslc-compose/releases/latest"><img alt="Latest release" style="vertical-align:middle" src="https://img.shields.io/github/v/release/bacarndiaye/wslc-compose?label=latest%20release"></a>
     <a href="https://pypi.org/project/wslc-compose/"><img alt="PyPI version" style="vertical-align:middle" src="https://img.shields.io/pypi/v/wslc-compose.svg"></a>
     Available on <a href="https://pypi.org/project/wslc-compose/"><strong>PyPI</strong></a> —
-    also <code>uv tool install "wslc-compose==0.*"</code> or <code>pip install --user "wslc-compose==0.*"</code>.<br>
+    also <code>uv tool install "wslc-compose==<span class="ver">0.4.0</span>"</code> or <code>pip install --user "wslc-compose==<span class="ver">0.4.0</span>"</code>.<br>
     No pip or pipx on your distro? Use the
     <a href="https://github.com/bacarndiaye/wslc-compose#one-liner-no-pip-venv-or-pipx-on-your-distro">one-line installer</a>.
   </p>
@@ -390,11 +390,13 @@ my-project-web-1   web      nginx:alpine  running  <span class="hl">0.0.0.0:8080
 </footer>
 
 <script>
-  // Keep the hero pill on the latest GitHub release tag (static text is the fallback).
+  // Keep the hero pill and the install commands on the latest GitHub release tag (static text is the fallback).
   fetch('https://api.github.com/repos/bacarndiaye/wslc-compose/releases/latest')
     .then(function (r) { return r.ok ? r.json() : null; })
     .then(function (d) {
-      if (d && d.tag_name) document.getElementById('latest-version').textContent = d.tag_name;
+      if (!d || !d.tag_name) return;
+      document.getElementById('latest-version').textContent = d.tag_name;
+      document.querySelectorAll('.ver').forEach(function (el) { el.textContent = d.tag_name.replace(/^v/, ''); });
     })
     .catch(function () {});
 </script>
