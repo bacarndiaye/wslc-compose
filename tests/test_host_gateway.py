@@ -136,3 +136,18 @@ def test_start_includes_stopped_containers_and_refreshes_extra_hosts(monkeypatch
     assert states == [True]
     assert starts == [["start", "demo-web-1"]]
     assert hosts == [("demo-web-1", ["db:10.0.0.3"], False)]
+
+
+@pytest.mark.parametrize("code, text", [
+    (71, "different owner"),
+    (72, "DOCKER-USER"),
+    (1, "iptables, iptables-restore and flock"),
+])
+def test_silent_session_failure_gets_an_actionable_message(monkeypatch, code, text):
+    import subprocess
+    monkeypatch.setattr(engine, "find_wslc", lambda: "wslc")
+    monkeypatch.setattr(engine.subprocess, "run",
+                        lambda *a, **k: subprocess.CompletedProcess(a, code, "", ""))
+    with pytest.raises(WslcError, match=text) as info:
+        engine.run_session_script("true")
+    assert f"exit code {code}" in str(info.value)

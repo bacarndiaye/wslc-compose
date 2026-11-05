@@ -1,0 +1,22 @@
+# `host.docker.internal:host-gateway` + a published port, reached from a sibling
+# container exactly like on Docker. See README "Networking > Host gateway".
+services:
+  api:
+    image: alpine
+    # Tiny one-shot-per-connection HTTP server (busybox nc), no extra image needed.
+    command: ["sh", "-c", "while true; do printf 'HTTP/1.0 200 OK\\r\\n\\r\\nhello-from-api\\n' | nc -l -p 80; done"]
+    ports: ["18080:80"]
+    networks: [appnet]
+
+  client:
+    image: alpine
+    command: sleep 600
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    networks: [appnet]
+
+networks:
+  appnet:
+    ipam:
+      config:
+        - subnet: 172.31.50.0/24
+          gateway: 172.31.50.1
