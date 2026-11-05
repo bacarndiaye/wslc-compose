@@ -19,6 +19,20 @@ jobs:
       - run: pip install -e . pytest
       - run: pytest -v
 
+  test-windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e . pytest
+      - run: pytest -v
+
   lint:
     runs-on: ubuntu-latest
     steps:
