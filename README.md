@@ -22,7 +22,7 @@ naming, config-drift detection and scaling included.
 ## Install in one line
 
 ```console
-pipx install "wslc-compose==0.4.0"      # or: uv tool install "wslc-compose==0.4.0"
+pipx install "wslc-compose==0.5.0"      # or: uv tool install "wslc-compose==0.5.0"
 ```
 
 Latest release: [![Latest release](https://img.shields.io/github/v/release/bacarndiaye/wslc-compose?label=)](https://github.com/bacarndiaye/wslc-compose/releases/latest) — published on **[PyPI](https://pypi.org/project/wslc-compose/)** · [more install options](#installation).
@@ -95,12 +95,12 @@ Two executables are installed:
 version keeps a future breaking 1.0 from landing by surprise:
 
 ```console
-pipx install "wslc-compose==0.4.0"
+pipx install "wslc-compose==0.5.0"
 # or
-uv tool install "wslc-compose==0.4.0"
+uv tool install "wslc-compose==0.5.0"
 ```
 
-(`0.4.0` is the latest release. Use `==0.*` instead to follow the 0.x series automatically, or drop the version to always get the newest.)
+(`0.5.0` is the latest release. Use `==0.*` instead to follow the 0.x series automatically, or drop the version to always get the newest.)
 
 Upgrade later with `pipx upgrade wslc-compose` (or `uv tool upgrade wslc-compose`).
 
@@ -113,7 +113,7 @@ Don't use `--break-system-packages`; install the CLI in its own isolated environ
 ```console
 sudo apt install pipx          # Debian 12+/Ubuntu 23.04+; then reopen your shell
 pipx ensurepath
-pipx install "wslc-compose==0.4.0"
+pipx install "wslc-compose==0.5.0"
 ```
 
 No `pipx` available (or you'd rather not install it)? The [one-liner below](#one-liner-no-pip-venv-or-pipx-on-your-distro)

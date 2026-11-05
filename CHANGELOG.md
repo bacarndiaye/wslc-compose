@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 — 2026-11-05
 
 ### Added
 - `depends_on: required: false` (#31): optional dependencies are not pulled in by selection
@@ -9,10 +9,23 @@
   `cap_add` / `cap_drop` → `--cap-add` / `--cap-drop`. Detected from `wslc run --help`;
   older wslc keeps the previous behaviour with a clear warning. Changing them recreates the
   container (reconciled with `inspect`, the shared config hash is unchanged).
-- CI also runs on Windows (#35). `scripts/bump_version.py` keeps doc pins in sync (#27).
+- `examples/host-gateway`: the `host.docker.internal:host-gateway` rules were validated end to
+  end on a real WSLC session (#28).
 
 ### Changed
 - `restart: unless-stopped` / `on-failure[:N]` warn that wslc only supports `always` and `no`.
+- `install.sh` / `install.ps1` install the PyPI release by default (0.3.3).
+- A silent failure of the host-gateway session script now reports its cause and exit code.
+
+### Documentation
+- Debian/Ubuntu install (PEP 668, `externally-managed-environment`); `pip install --user`
+  removed from the install instructions (#26).
+- Install commands pin the latest release; the landing page shows the live version and
+  lists the new features.
+
+### CI / tooling
+- Test suite also runs on Windows (#35); `install.sh` is tested on a stock Debian (#26).
+- `scripts/bump_version.py` + a test keep the version pinned in the docs in sync (#27).
 
 ## 0.4.0 — 2026-11-05
 
