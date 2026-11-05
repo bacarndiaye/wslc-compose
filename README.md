@@ -22,7 +22,7 @@ naming, config-drift detection and scaling included.
 ## Install in one line
 
 ```console
-pipx install "wslc-compose==0.4.0"      # or: uv tool install "wslc-compose==0.4.0" / pip install --user "wslc-compose==0.4.0"
+pipx install "wslc-compose==0.4.0"      # or: uv tool install "wslc-compose==0.4.0"
 ```
 
 Latest release: [![Latest release](https://img.shields.io/github/v/release/bacarndiaye/wslc-compose?label=)](https://github.com/bacarndiaye/wslc-compose/releases/latest) — published on **[PyPI](https://pypi.org/project/wslc-compose/)** · [more install options](#installation).
@@ -98,14 +98,27 @@ version keeps a future breaking 1.0 from landing by surprise:
 pipx install "wslc-compose==0.4.0"
 # or
 uv tool install "wslc-compose==0.4.0"
-# or
-pip install --user "wslc-compose==0.4.0"
 ```
 
 (`0.4.0` is the latest release. Use `==0.*` instead to follow the 0.x series automatically, or drop the version to always get the newest.)
 
-Upgrade later with `pipx upgrade wslc-compose` (or `uv tool upgrade wslc-compose` /
-`pip install --user -U wslc-compose`).
+Upgrade later with `pipx upgrade wslc-compose` (or `uv tool upgrade wslc-compose`).
+
+#### Debian, Ubuntu and other "externally managed" Pythons
+
+Recent Debian/Ubuntu (Python 3.11+ from `apt`) refuse a plain `pip install`
+(`error: externally-managed-environment`, [PEP 668](https://peps.python.org/pep-0668/)).
+Don't use `--break-system-packages`; install the CLI in its own isolated environment instead:
+
+```console
+sudo apt install pipx          # Debian 12+/Ubuntu 23.04+; then reopen your shell
+pipx ensurepath
+pipx install "wslc-compose==0.4.0"
+```
+
+No `pipx` available (or you'd rather not install it)? The [one-liner below](#one-liner-no-pip-venv-or-pipx-on-your-distro)
+needs only `curl` and does the same without touching the system Python. If `pipx` is
+not found, your shell may "correct" it to `pip` — answer **n**.
 
 ### One-liner (no pip, venv or pipx on your distro)
 
@@ -139,7 +152,7 @@ pipx install git+https://github.com/bacarndiaye/wslc-compose
 # or
 uv tool install --from git+https://github.com/bacarndiaye/wslc-compose wslc-compose
 # or
-pip install --user git+https://github.com/bacarndiaye/wslc-compose
+python3 -m venv ~/.venvs/wslc-compose && ~/.venvs/wslc-compose/bin/pip install git+https://github.com/bacarndiaye/wslc-compose
 ```
 
 ### From a local checkout
@@ -614,6 +627,14 @@ migrating away from this tool is trivial — your compose files never stopped be
 standard compose files.
 
 ## Troubleshooting
+
+**`error: externally-managed-environment` when installing** — your distro's Python is
+managed by `apt` (PEP 668) and `pip install` is blocked on purpose. Use `pipx` or the
+installer, see [Debian, Ubuntu and other externally managed Pythons](#debian-ubuntu-and-other-externally-managed-pythons).
+
+**`wslc-compose: command not found` right after installing** — `~/.local/bin` is not on
+your `PATH`. Run `pipx ensurepath` (or add `export PATH="$HOME/.local/bin:$PATH"` to your
+`~/.bashrc` / `~/.zshrc`) and open a new terminal.
 
 **`wslc CLI not found`** — install the WSL container preview, or point
 `WSLC_COMPOSE_BIN` at the binary (e.g. `/mnt/c/Program Files/WSL/wslc.exe`).
