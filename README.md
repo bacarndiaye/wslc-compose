@@ -532,7 +532,12 @@ bindings are not widened. Only running containers owned by the same Compose proj
 The rules for bridge-network clients are refreshed on apply/start/restart/stop and removed by `down`. Compatible frontends
 use the same owner/chain format and lock, preserve Docker's existing chains and `DOCKER-USER`
 policy, and fail if an existing compatibility chain has a different owner. WSLC 3.0.3.0's
-`system session run` and session `iptables`, `iptables-restore` and `flock` are required.
+`system session run` and session `iptables`, `iptables-restore` and `flock` are required
+(a failure reports which of these is missing, or that a chain has another owner).
+
+Validated end to end on WSLC 3.0.3.0 (reach a published port from a sibling container,
+idempotent `up`, recreate, stop/start, cleanup by `down`, and a control without the rules
+that is refused): see [`examples/host-gateway`](examples/host-gateway).
 This handles published Compose service ports; it does not proxy arbitrary Windows-only host
 services. `/etc/hosts` writing still uses root after startup until WSLC exposes native `--add-host`.
 

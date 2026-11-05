@@ -172,6 +172,16 @@ def popen(args: List[str], **kwargs) -> subprocess.Popen:
     return subprocess.Popen([find_wslc()] + args, **kwargs)
 
 
+def _host_gateway_hint(code: int) -> str:
+    """The session script is silent on failure; translate its exit status."""
+    reasons = {
+        71: "a host-gateway chain already exists with a different owner",
+        72: "the DOCKER-USER jump was not found in the session's FORWARD chain",
+    }
+    reason = reasons.get(code, "iptables, iptables-restore and flock must be available in the WSLC session")
+    return f"{reason} (exit code {code})"
+
+
 def run_session_script(script: str, dry_run: bool = False) -> subprocess.CompletedProcess:
     """The non-TTY session API requires a valid redirected stdin handle on Windows."""
     argv = [find_wslc(), "system", "session", "run", "sh", "-c", script]
@@ -183,7 +193,8 @@ def run_session_script(script: str, dry_run: bool = False) -> subprocess.Complet
     except (subprocess.TimeoutExpired, OSError) as exc:
         raise WslcError("host-gateway session execution failed or timed out") from exc
     if result.returncode:
-        raise WslcError("host-gateway compatibility failed: " + (result.stderr.strip() or result.stdout.strip()))
+        detail = result.stderr.strip() or result.stdout.strip() or _host_gateway_hint(result.returncode)
+        raise WslcError("host-gateway compatibility failed: " + detail)
     return result
 
 
