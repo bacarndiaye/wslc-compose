@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- `depends_on: required: false` (#31): optional dependencies are not pulled in by selection
+  and a failing condition only warns. A non-boolean `required` is rejected.
+
 ## 0.4.0 — 2026-11-05
 
 ### Added

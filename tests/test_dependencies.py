@@ -121,3 +121,19 @@ def test_completed_with_failure(fake_engine):
     fake_engine(_container(running=False, status="exited", exit_code=2))
     with pytest.raises(WslcError, match="did not complete successfully.*code 2"):
         _wait(project, web, [db, web])
+
+
+def test_optional_dependency_failure_only_warns(fake_engine):
+    project, db, web = _project()
+    web.depends_on_optional = ["db"]
+    fake_engine(_container("unhealthy"))
+    logs = []
+    _wait(project, web, [db, web], log=logs.append)
+    assert any("optional dependency 'db'" in line and "unhealthy" in line for line in logs)
+
+
+def test_required_dependency_failure_still_raises(fake_engine):
+    project, db, web = _project()
+    fake_engine(_container("unhealthy"))
+    with pytest.raises(WslcError, match="unhealthy"):
+        _wait(project, web, [db, web])
