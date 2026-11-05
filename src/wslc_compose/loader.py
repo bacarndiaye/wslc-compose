@@ -33,8 +33,6 @@ COMPOSE_FILENAMES = (
 
 # compose keys we accept but wslc cannot enforce (yet)
 UNSUPPORTED_KEYS = {
-    "cap_add": "capabilities are not configurable with wslc",
-    "cap_drop": "capabilities are not configurable with wslc",
     "privileged": "privileged mode is not supported by wslc",
     "devices": "device mapping is not supported by wslc (see 'gpus' for GPUs)",
     "sysctls": "sysctls are not supported by wslc",
@@ -327,6 +325,19 @@ def _parse_depends_on(value) -> Tuple[List[str], Dict[str, str], List[str]]:
                 optional.append(name)
         return deps, conditions, optional
     raise ComposeError("depends_on: expected list or mapping")
+
+
+def _capabilities(service: str, key: str, value) -> List[str]:
+    """Normalized Linux capability names: upper case, no CAP_ prefix, de-duplicated."""
+    result: List[str] = []
+    for item in _as_list(value):
+        name = str(item).strip().upper()
+        name = name[4:] if name.startswith("CAP_") else name
+        if not name:
+            raise ComposeError(f"service {service!r}: {key} contains an empty capability")
+        if name not in result:
+            result.append(name)
+    return result
 
 
 def _parse_build(value, project_dir: str) -> BuildConfig:
@@ -849,11 +860,15 @@ def load_project(
         if svc.extra_hosts:
             project.warnings.append(f"{svc_name}: extra_hosts is applied after start; the entrypoint may not observe it")
         svc.profiles = _as_list(cfg.get("profiles"))
-        svc.restart = cfg.get("restart")
-        if svc.restart and svc.restart not in ("no", '"no"'):
+        restart = cfg.get("restart")
+        svc.restart = "no" if restart is False else (str(restart) if restart is not None else None)
+        if svc.restart not in (None, "no", "always"):
             project.warnings.append(
-                f"{svc_name}: restart policies are not supported by wslc yet (ignoring 'restart: {svc.restart}')"
+                f"{svc_name}: restart policy {svc.restart!r} is not supported by wslc "
+                "(only 'always' and 'no'); ignoring it"
             )
+        svc.cap_add = _capabilities(svc_name, "cap_add", cfg.get("cap_add"))
+        svc.cap_drop = _capabilities(svc_name, "cap_drop", cfg.get("cap_drop"))
 
         raw_ulimits = cfg.get("ulimits")
         if isinstance(raw_ulimits, dict):

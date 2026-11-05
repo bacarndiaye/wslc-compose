@@ -5,6 +5,14 @@
 ### Added
 - `depends_on: required: false` (#31): optional dependencies are not pulled in by selection
   and a failing condition only warns. A non-boolean `required` is rejected.
+- wslc ≥ 3.0.5 options (#34, validated on 3.0.5.0): `restart: always` → `--restart always`,
+  `cap_add` / `cap_drop` → `--cap-add` / `--cap-drop`. Detected from `wslc run --help`;
+  older wslc keeps the previous behaviour with a clear warning. Changing them recreates the
+  container (reconciled with `inspect`, the shared config hash is unchanged).
+- CI also runs on Windows (#35). `scripts/bump_version.py` keeps doc pins in sync (#27).
+
+### Changed
+- `restart: unless-stopped` / `on-failure[:N]` warn that wslc only supports `always` and `no`.
 
 ## 0.4.0 — 2026-11-05
 

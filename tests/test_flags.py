@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from wslc_compose import LABEL_CONFIG_FILES, LABEL_CONFIG_HASH, LABEL_PROJECT
+from wslc_compose import LABEL_CONFIG_FILES, LABEL_CONFIG_HASH, LABEL_PROJECT, engine
 from wslc_compose.flags import build_args, image_name, run_args
 from wslc_compose.loader import load_project
 from wslc_compose.model import (
@@ -293,3 +293,31 @@ def test_build_args(tmp_path):
     assert args[args.index("--target") + 1] == "dev"
     assert "--no-cache" in args
     assert args[-1] == f"WIN({tmp_path / 'src'})"
+
+
+def _service_with_runtime_options():
+    service = Service(name="web", image="x", restart="always", cap_add=["NET_ADMIN", "SYS_TIME"], cap_drop=["MKNOD"])
+    return Project(name="demo", directory=".", services={"web": service}), service
+
+
+def test_run_args_apply_restart_and_capabilities_when_supported(monkeypatch):
+    monkeypatch.setattr(engine, "run_options", lambda: frozenset({"--restart", "--cap-add", "--cap-drop"}))
+    project, service = _service_with_runtime_options()
+    args = run_args(project, service, 1)
+    assert args[args.index("--restart") + 1] == "always"
+    assert [args[i + 1] for i, a in enumerate(args) if a == "--cap-add"] == ["NET_ADMIN", "SYS_TIME"]
+    assert [args[i + 1] for i, a in enumerate(args) if a == "--cap-drop"] == ["MKNOD"]
+
+
+def test_run_args_omit_unsupported_options(monkeypatch):
+    monkeypatch.setattr(engine, "run_options", lambda: frozenset())
+    project, service = _service_with_runtime_options()
+    args = run_args(project, service, 1)
+    assert "--restart" not in args and "--cap-add" not in args and "--cap-drop" not in args
+
+
+def test_restart_and_capabilities_do_not_change_the_shared_hash():
+    plain = Service(name="web", image="x")
+    _, rich = _service_with_runtime_options()
+    rich.name, rich.image = "web", "x"
+    assert plain.config_hash() == rich.config_hash()

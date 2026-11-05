@@ -224,6 +224,16 @@ def list_project_containers(project: str, all_states: bool = False) -> List[dict
     return capture_json(args)
 
 
+@lru_cache(maxsize=1)
+def run_options() -> frozenset:
+    """Options the installed `wslc run` advertises (empty when it cannot be queried)."""
+    try:
+        proc = run(["run", "--help"], capture=True, check=False)
+    except (WslcError, OSError):
+        return frozenset()
+    return frozenset(re.findall(r"--[a-z0-9][a-z0-9-]*", (proc.stdout or "") + (proc.stderr or "")))
+
+
 def inspect(object_id: str) -> Optional[dict]:
     try:
         result = capture_json(["inspect", object_id])

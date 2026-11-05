@@ -113,7 +113,10 @@ class Service:
     healthcheck: Optional[HealthCheck] = None
     replicas: int = 1
     profiles: List[str] = field(default_factory=list)
-    restart: Optional[str] = None  # accepted but not enforceable by wslc yet
+    # `always` is applied with wslc >= 3.0.5 (`--restart`); other policies are not supported.
+    restart: Optional[str] = None
+    cap_add: List[str] = field(default_factory=list)  # applied with wslc >= 3.0.5
+    cap_drop: List[str] = field(default_factory=list)
 
     def config_hash(self, project: Optional["Project"] = None) -> str:
         """Portable configuration identity for compatible Compose frontends."""
