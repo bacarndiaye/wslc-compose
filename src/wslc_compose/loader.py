@@ -291,21 +291,31 @@ def _resolve_bind_source(source: str, project_dir: str) -> str:
 DEPENDS_ON_CONDITIONS = ("service_started", "service_healthy", "service_completed_successfully")
 
 
-def _parse_depends_on(value) -> Tuple[List[str], Dict[str, str]]:
-    """Return (dependency names, {name: condition}) for non-default conditions."""
+def _parse_required(name: str, value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.lower() in ("true", "false"):
+        return value.lower() == "true"
+    raise ComposeError(f"depends_on.{name}.required: expected true or false, got {value!r}")
+
+
+def _parse_depends_on(value) -> Tuple[List[str], Dict[str, str], List[str]]:
+    """Return (dependency names, {name: non-default condition}, optional names)."""
     if value is None:
-        return [], {}
+        return [], {}, []
     if isinstance(value, list):
-        return [str(v) for v in value], {}
+        return [str(v) for v in value], {}, []
     if isinstance(value, dict):
         deps: List[str] = []
         conditions: Dict[str, str] = {}
+        optional: List[str] = []
         for name, cfg in value.items():
             name = str(name)
             deps.append(name)
             if cfg is not None and not isinstance(cfg, dict):
                 raise ComposeError(f"depends_on.{name}: expected a mapping")
-            condition = (cfg or {}).get("condition", "service_started")
+            cfg = cfg or {}
+            condition = cfg.get("condition", "service_started")
             if condition not in DEPENDS_ON_CONDITIONS:
                 raise ComposeError(
                     f"depends_on.{name}: unsupported condition {condition!r} "
@@ -313,7 +323,9 @@ def _parse_depends_on(value) -> Tuple[List[str], Dict[str, str]]:
                 )
             if condition != "service_started":
                 conditions[name] = condition
-        return deps, conditions
+            if not _parse_required(name, cfg.get("required", True)):
+                optional.append(name)
+        return deps, conditions, optional
     raise ComposeError("depends_on: expected list or mapping")
 
 
@@ -797,7 +809,8 @@ def load_project(
                 mount.source = project.volumes[mount.source].name
 
         try:
-            svc.depends_on, svc.depends_on_conditions = _parse_depends_on(cfg.get("depends_on"))
+            svc.depends_on, svc.depends_on_conditions, svc.depends_on_optional = _parse_depends_on(
+                cfg.get("depends_on"))
         except ComposeError as exc:
             raise ComposeError(f"service {svc_name!r}: {exc}") from exc
 

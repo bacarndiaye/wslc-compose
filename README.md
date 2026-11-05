@@ -385,6 +385,17 @@ or exited non-zero. Use `--wait-timeout SEC` to bound each wait. Dependencies th
 part of the `up` (other profiles, scaled to 0) are not waited on, and `--dry-run` only prints
 what it would wait for.
 
+With `required: false` a dependency is optional: it is not pulled in when it is not selected
+(profile off, or `up web` only), and when it *is* started but its condition fails (unhealthy,
+exited, timeout) `up` prints a warning and carries on instead of stopping.
+
+```yaml
+depends_on:
+  cache:
+    condition: service_healthy
+    required: false
+```
+
 ## Secrets and configs
 
 File-backed `secrets` and `configs` use the standard Compose syntax. Each one is mounted

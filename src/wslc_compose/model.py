@@ -87,6 +87,8 @@ class Service:
     depends_on: List[str] = field(default_factory=list)
     # Start conditions per dependency; a dependency absent here means service_started.
     depends_on_conditions: Dict[str, str] = field(default_factory=dict)
+    # `required: false` dependencies: not pulled in by selection, failures only warn.
+    depends_on_optional: List[str] = field(default_factory=list)
     hostname: Optional[str] = None
     domainname: Optional[str] = None
     dns: List[str] = field(default_factory=list)
@@ -254,6 +256,8 @@ class Project:
                 if not svc:
                     continue
                 for dep in svc.depends_on:
+                    if dep in svc.depends_on_optional:
+                        continue  # `required: false`: only started if selected anyway
                     if dep not in selected:
                         selected.add(dep)
                         stack.append(dep)

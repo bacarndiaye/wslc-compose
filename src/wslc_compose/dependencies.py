@@ -81,14 +81,23 @@ def wait_for_dependencies(
             continue
         log(f"Waiting for {dep} to be healthy ..." if condition == "service_healthy"
             else f"Waiting for {dep} to complete ...")
-        deadline = clock() + timeout if timeout else None
-        while True:
-            containers = _dependency_state(project, dep)
-            if not containers:
-                raise WslcError(f"dependency {dep!r} has no container to wait for")
-            if all(_evaluate(condition, dep, data) is None for data in containers):
-                break
-            if deadline is not None and clock() >= deadline:
-                raise WslcError(f"timed out after {timeout:g}s waiting for {dep!r} "
-                                f"({condition})")
-            sleep(POLL_INTERVAL)
+        try:
+            _wait_one(project, dep, condition, timeout, sleep, clock)
+        except WslcError as exc:
+            if dep not in service.depends_on_optional:
+                raise
+            log(f"warning: optional dependency {dep!r} (required: false): {exc}; continuing")
+
+
+def _wait_one(project: Project, dep: str, condition: str, timeout: float,
+              sleep: Callable[[float], None], clock: Callable[[], float]) -> None:
+    deadline = clock() + timeout if timeout else None
+    while True:
+        containers = _dependency_state(project, dep)
+        if not containers:
+            raise WslcError(f"dependency {dep!r} has no container to wait for")
+        if all(_evaluate(condition, dep, data) is None for data in containers):
+            return
+        if deadline is not None and clock() >= deadline:
+            raise WslcError(f"timed out after {timeout:g}s waiting for {dep!r} ({condition})")
+        sleep(POLL_INTERVAL)

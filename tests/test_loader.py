@@ -713,3 +713,34 @@ def test_conditional_dependency_on_undefined_service_is_rejected(tmp_path):
             "services:\n  b:\n    image: x\n    depends_on:\n      ghost:\n"
             "        condition: service_healthy\n",
         )
+
+
+def test_depends_on_required_false_is_recorded(tmp_path):
+    project = _deps(
+        tmp_path,
+        "services:\n  a:\n    image: x\n  c:\n    image: x\n  b:\n    image: x\n    depends_on:\n"
+        "      a:\n        condition: service_healthy\n        required: false\n"
+        "      c:\n        required: 'true'\n",
+    )
+    web = project.services["b"]
+    assert web.depends_on_optional == ["a"]
+    assert web.depends_on_conditions == {"a": "service_healthy"}
+
+
+def test_depends_on_required_must_be_boolean(tmp_path):
+    with pytest.raises(ComposeError, match="required: expected true or false"):
+        _deps(
+            tmp_path,
+            "services:\n  a:\n    image: x\n  b:\n    image: x\n    depends_on:\n"
+            "      a:\n        required: maybe\n",
+        )
+
+
+def test_optional_dependency_is_not_pulled_in_by_selection(tmp_path):
+    project = _deps(
+        tmp_path,
+        "services:\n  cache:\n    image: x\n    profiles: [extra]\n  db:\n    image: x\n"
+        "  web:\n    image: x\n    depends_on:\n      db: {}\n      cache:\n        required: false\n",
+    )
+    assert [s.name for s in project.sorted_services(["web"])] == ["db", "web"]
+    assert [s.name for s in project.sorted_services()] == ["cache", "db", "web"]
