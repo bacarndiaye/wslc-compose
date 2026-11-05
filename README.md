@@ -335,11 +335,12 @@ Show the wslc-compose and wslc versions.
 | `stdin_open`, `tty` | `-i`, `-t` |
 | `secrets` / `configs` (`file:` source; short & long service syntax) | read-only file mount at `/run/secrets/<name>` (secrets) or `/<name>` (configs), or `target` — see [Secrets and configs](#secrets-and-configs) |
 | `name` (top level) | default project name |
+| `restart: always` / `"no"` | `--restart always` — **needs wslc ≥ 3.0.5**; `unless-stopped` and `on-failure[:N]` are not supported by wslc (warned, ignored) |
+| `cap_add`, `cap_drop` | `--cap-add`, `--cap-drop` — **needs wslc ≥ 3.0.5**; may be blocked by the `AllowWSLContainerPrivileged` policy |
 | `include` (string, list, or `path:` mapping) | other compose files merged into the project; relative paths inside an included file resolve against *its* directory |
 
 Keys that wslc cannot honor yet are **accepted and reported as a warning** instead of
-failing, so your existing files keep working: `restart`, `privileged`,
-`cap_add`/`cap_drop`, `devices`, `sysctls`, `init`,
+failing, so your existing files keep working: `privileged`, `devices`, `sysctls`, `init`,
 `pid`, `ipc`, `read_only`, `security_opt`, `logging`.
 
 Rejected with an explicit error (no silent surprise): `environment:`/`external:` secrets and
@@ -610,8 +611,10 @@ services. `/etc/hosts` writing still uses root after startup until WSLC exposes 
 
 `wslc` is a public preview; `wslc-compose` warns at load time rather than failing:
 
-- **`restart:` policies** — no wslc equivalent yet; ignored (a `restart` after reboot
-  is manual: `wslc compose up -d`).
+- **`restart:` policies** — wslc ≥ 3.0.5 supports `always` and `no` only (`--restart`); with
+  an older wslc, or for `unless-stopped` / `on-failure`, the policy is ignored with a warning
+  (a restart after reboot is then manual: `wslc compose up -d`). Changing `restart` or
+  `cap_add`/`cap_drop` recreates the container on the next `up`, like any other change.
 - **One IPv4 IPAM subnet per network**, without IPv6/custom IPAM or auxiliary
   address reservations (see [Networking](#networking)). Multiple networks per container are supported.
 - **Session mount limit**: the current preview caps mounted volumes at ~15 per WSL
@@ -634,7 +637,7 @@ services. `/etc/hosts` writing still uses root after startup until WSLC exposes 
 - **Published ports bind the Windows loopback**, not the distro's: test them from
   the Windows side (browser, `powershell.exe Invoke-WebRequest`), not with a `curl
   localhost` inside WSL.
-- `privileged`, `cap_add`, `devices`, `sysctls`, `logging` — not configurable with wslc;
+- `privileged`, `devices`, `sysctls`, `logging` — not configurable with wslc;
   ignored with a warning.
 
 When wslc gains native Compose support ([#40948](https://github.com/microsoft/WSL/issues/40948))

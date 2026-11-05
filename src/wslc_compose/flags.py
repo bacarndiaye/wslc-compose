@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import Callable, List, Optional
 
-from wslc_compose import LABEL_CREATE_OPERATION, LABEL_HOST_GATEWAY
+from wslc_compose import LABEL_CREATE_OPERATION, LABEL_HOST_GATEWAY, engine
 from wslc_compose.metadata import container_labels
 from wslc_compose.model import Project, Service
 
@@ -117,6 +117,14 @@ def run_args(
         args += ["--stop-signal", service.stop_signal]
     if service.stop_timeout_seconds is not None:
         args += ["--stop-timeout", str(service.stop_timeout_seconds)]
+    supported = engine.run_options()
+    if service.restart == "always" and "--restart" in supported:
+        args += ["--restart", "always"]
+    if "--cap-add" in supported:
+        for capability in service.cap_add:
+            args += ["--cap-add", capability]
+        for capability in service.cap_drop:
+            args += ["--cap-drop", capability]
     health = service.healthcheck
     if health:
         if health.disabled:

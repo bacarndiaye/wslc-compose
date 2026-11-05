@@ -364,7 +364,8 @@ my-project-web-1   web      nginx:alpine  running  <span class="hl">0.0.0.0:8080
         <tr><td><code>depends_on</code>, <code>deploy.replicas</code>, <code>profiles</code></td><td class="ok">✓ &nbsp;ordering, service_healthy / completed_successfully waits, scaling, opt-in services</td></tr>
         <tr><td><code>healthcheck</code></td><td class="ok">✓ &nbsp;<code>--health-cmd</code>, <code>--health-interval</code>, …</td></tr>
         <tr><td><code>secrets</code>, <code>configs</code> (file-backed), <code>include</code></td><td class="ok">✓ &nbsp;read-only mounts, per-file path rebasing</td></tr>
-        <tr><td><code>restart</code>, <code>privileged</code>, …</td><td>⚠ &nbsp;no wslc equivalent yet — warned, not fatal</td></tr>
+        <tr><td><code>restart: always</code>, <code>cap_add</code>, <code>cap_drop</code></td><td class="ok">✓ &nbsp;<code>--restart</code>, <code>--cap-add/--cap-drop</code> with wslc ≥ 3.0.5</td></tr>
+        <tr><td><code>privileged</code>, <code>devices</code>, <code>restart: unless-stopped</code>, …</td><td>⚠ &nbsp;no wslc equivalent yet — warned, not fatal</td></tr>
       </table>
     </div>
     <div class="callout">

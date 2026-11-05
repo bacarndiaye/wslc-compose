@@ -89,6 +89,47 @@ def _load(ns: argparse.Namespace) -> Project:
     return project
 
 
+def _runtime_options_warnings(services: List[Service]) -> List[str]:
+    """wslc < 3.0.5 has no --restart / --cap-*: say so instead of silently ignoring them."""
+    supported = engine.run_options()
+    messages = []
+    for svc in services:
+        if svc.restart == "always" and "--restart" not in supported:
+            messages.append(f"{svc.name}: 'restart: always' needs wslc >= 3.0.5; ignoring it")
+        if (svc.cap_add or svc.cap_drop) and "--cap-add" not in supported:
+            messages.append(f"{svc.name}: cap_add/cap_drop need wslc >= 3.0.5; ignoring them")
+    return messages
+
+
+def _runtime_matches(svc: Service, current: dict) -> bool:
+    """Restart policy and capabilities are reconciled against inspect (outside the shared hash).
+
+    Only options the installed wslc supports are compared, so an older wslc never
+    causes a recreate loop.
+    """
+    supported = engine.run_options()
+    if "--restart" in supported:
+        actual = current.get("restart_policy")
+        if ("always" if svc.restart == "always" else "no") != (actual if actual == "always" else "no"):
+            return False
+    if "--cap-add" in supported:
+        if sorted(svc.cap_add) != sorted(_normalized_caps(current.get("cap_add"))):
+            return False
+        if sorted(svc.cap_drop) != sorted(_normalized_caps(current.get("cap_drop"))):
+            return False
+    return True
+
+
+def _normalized_caps(values) -> List[str]:
+    names = []
+    for value in values or []:
+        name = str(value).upper()
+        name = name[4:] if name.startswith("CAP_") else name
+        if name not in names:
+            names.append(name)
+    return names
+
+
 def _select_services(
     project: Project, names: List[str], profiles: List[str]
 ) -> List[Service]:
@@ -143,6 +184,9 @@ def _project_containers(project: Project, all_states: bool = False) -> List[dict
                 "networks": (data.get("NetworkSettings") or {}).get("Networks"),
                 "network_mode": (data.get("HostConfig") or {}).get("NetworkMode"),
                 "host_gateway": labels.get(LABEL_HOST_GATEWAY) == "v1",
+                "restart_policy": ((data.get("HostConfig") or {}).get("RestartPolicy") or {}).get("Name"),
+                "cap_add": (data.get("HostConfig") or {}).get("CapAdd"),
+                "cap_drop": (data.get("HostConfig") or {}).get("CapDrop"),
             }
         )
     return enriched
@@ -209,6 +253,9 @@ def cmd_up(ns: argparse.Namespace) -> int:
     if not services:
         _err("no services to start")
         return 1
+
+    for message in _runtime_options_warnings(services):
+        _err(f"warning: {message}")
 
     scale: Dict[str, int] = {}
     for spec in ns.scale or []:
@@ -310,7 +357,8 @@ def cmd_up(ns: argparse.Namespace) -> int:
                 fresh = (current["hash"] == desired_hash and not ns.force_recreate
                          and not (current.get("host_gateway") and not any(
                              entry.partition(":")[2].strip().lower() == "host-gateway" for entry in svc.extra_hosts))
-                         and networking.configuration_matches(svc, current))
+                         and networking.configuration_matches(svc, current)
+                         and _runtime_matches(svc, current))
                 if fresh and current["running"]:
                     _info(f"Container {cname} is up-to-date")
                     continue

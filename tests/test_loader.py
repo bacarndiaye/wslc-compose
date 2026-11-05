@@ -281,7 +281,7 @@ services:
   a:
     image: x
     privileged: true
-    restart: always
+    restart: on-failure:3
 """
     )
     project = load_project(str(tmp_path / "compose.yaml"))
@@ -744,3 +744,27 @@ def test_optional_dependency_is_not_pulled_in_by_selection(tmp_path):
     )
     assert [s.name for s in project.sorted_services(["web"])] == ["db", "web"]
     assert [s.name for s in project.sorted_services()] == ["cache", "db", "web"]
+
+
+def test_capabilities_are_normalized(tmp_path):
+    project = _deps(
+        tmp_path,
+        "services:\n  a:\n    image: x\n    cap_add: [net_admin, CAP_SYS_TIME, NET_ADMIN]\n    cap_drop: [ALL]\n",
+    )
+    svc = project.services["a"]
+    assert svc.cap_add == ["NET_ADMIN", "SYS_TIME"]
+    assert svc.cap_drop == ["ALL"]
+    assert not any("cap_" in w for w in project.warnings)
+
+
+@pytest.mark.parametrize("value, expected, warns", [
+    ("always", "always", False),
+    ("'no'", "no", False),
+    ("no", "no", False),  # YAML 1.1 turns a bare no into False
+    ("unless-stopped", "unless-stopped", True),
+    ("on-failure:3", "on-failure:3", True),
+])
+def test_restart_policy_parsing(tmp_path, value, expected, warns):
+    project = _deps(tmp_path, f"services:\n  a:\n    image: x\n    restart: {value}\n")
+    assert project.services["a"].restart == expected
+    assert any("restart policy" in w for w in project.warnings) is warns

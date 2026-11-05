@@ -155,6 +155,9 @@ def test_project_containers_accepts_wslc_list_field_names(monkeypatch):
             "networks": None,
             "network_mode": None,
             "host_gateway": False,
+            "restart_policy": None,
+            "cap_add": None,
+            "cap_drop": None,
         }
     ]
     assert cli._format_ports(containers[0]["ports"]) == "127.0.0.1:1521->1521/tcp"
@@ -310,3 +313,45 @@ def test_up_dry_run_does_not_wait(monkeypatch, capsys):
                         lambda *a, **k: pytest.fail("dry run must not wait"))
     assert cli.cmd_up(ns) == 0
     assert "would wait for db: service_healthy" in capsys.readouterr().out
+
+
+def _opts(monkeypatch, *names):
+    monkeypatch.setattr(cli.engine, "run_options", lambda: frozenset(names))
+
+
+def test_runtime_warnings_on_old_wslc(monkeypatch):
+    svc = Service(name="web", image="x", restart="always", cap_add=["NET_ADMIN"])
+    _opts(monkeypatch)
+    messages = cli._runtime_options_warnings([svc])
+    assert any("restart: always" in m and "3.0.5" in m for m in messages)
+    assert any("cap_add/cap_drop" in m for m in messages)
+
+
+def test_no_runtime_warnings_when_wslc_supports_options(monkeypatch):
+    svc = Service(name="web", image="x", restart="always", cap_add=["NET_ADMIN"])
+    _opts(monkeypatch, "--restart", "--cap-add", "--cap-drop")
+    assert cli._runtime_options_warnings([svc]) == []
+
+
+def test_runtime_matches_detects_policy_and_capability_drift(monkeypatch):
+    _opts(monkeypatch, "--restart", "--cap-add", "--cap-drop")
+    svc = Service(name="web", image="x", restart="always", cap_add=["NET_ADMIN"], cap_drop=["MKNOD"])
+    good = {"restart_policy": "always", "cap_add": ["CAP_NET_ADMIN"], "cap_drop": ["MKNOD"]}
+    assert cli._runtime_matches(svc, good)
+    assert not cli._runtime_matches(svc, {**good, "restart_policy": "no"})
+    assert not cli._runtime_matches(svc, {**good, "cap_add": []})
+    assert not cli._runtime_matches(svc, {**good, "cap_drop": None})
+    # restart removed from the compose file: the old container must be recreated
+    assert not cli._runtime_matches(Service(name="web", image="x", cap_add=["NET_ADMIN"], cap_drop=["MKNOD"]), good)
+
+
+def test_runtime_matches_ignores_unsupported_options(monkeypatch):
+    _opts(monkeypatch)  # wslc 3.0.3: never loop on recreate
+    svc = Service(name="web", image="x", restart="always", cap_add=["NET_ADMIN"])
+    assert cli._runtime_matches(svc, {})
+
+
+def test_plain_service_matches_container_without_runtime_fields(monkeypatch):
+    _opts(monkeypatch, "--restart", "--cap-add", "--cap-drop")
+    assert cli._runtime_matches(Service(name="web", image="x"), {"restart_policy": "no", "cap_add": [], "cap_drop": []})
+    assert cli._runtime_matches(Service(name="web", image="x"), {})
