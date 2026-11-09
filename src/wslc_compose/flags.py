@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 from typing import Callable, List, Optional
 
 from wslc_compose import LABEL_CREATE_OPERATION, LABEL_HOST_GATEWAY, engine
@@ -129,9 +130,14 @@ def run_args(
     if health:
         if health.disabled:
             args.append("--no-healthcheck")
-        elif health.test:
-            command = health.test[1] if health.test[0] == "CMD-SHELL" and len(health.test) > 1 else " ".join(health.test[1:])
-            args += ["--health-cmd", command]
+        else:
+            if health.test:
+                if health.test[0] == "CMD-SHELL" and len(health.test) > 1:
+                    command = health.test[1]
+                else:  # CMD form: each argument keeps its boundaries in the shell command
+                    command = shlex.join(health.test[1:])
+                args += ["--health-cmd", command]
+            # without `test`, the options tune the image's own healthcheck
             if health.interval:
                 args += ["--health-interval", health.interval]
             if health.timeout:
@@ -147,12 +153,19 @@ def run_args(
     if service.tty:
         args.append("-t")
 
-    entrypoint = service.entrypoint or []
-    if entrypoint:
+    entrypoint = service.entrypoint
+    if entrypoint is None and service.command == []:
+        # `command: []` clears the image CMD: an explicit --entrypoint resets it, so
+        # restate the image's own ENTRYPOINT (unknown when the image is not local yet:
+        # `up` pulls it first).
+        entrypoint = engine.image_entrypoint(image_name(project, service))
+    if entrypoint == []:
+        args += ["--entrypoint", ""]  # `entrypoint: []`: no entrypoint at all
+    elif entrypoint:
         args += ["--entrypoint", entrypoint[0]]
 
     args.append(image_name(project, service))
-    args += entrypoint[1:]
+    args += (entrypoint or [])[1:]
     args += service.command or []
     return args
 

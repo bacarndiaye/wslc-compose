@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import os
 import re
 import shlex
@@ -10,7 +11,7 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import yaml
 
-from wslc_compose.interpolation import interpolate_tree
+from wslc_compose.interpolation import InterpolationError, interpolate, interpolate_tree
 from wslc_compose.model import (
     BuildConfig,
     FileMount,
@@ -52,6 +53,116 @@ class ComposeError(ValueError):
     pass
 
 
+class _ComposeYamlLoader(yaml.SafeLoader):
+    """SafeLoader with YAML 1.2 scalars, as Docker Compose reads compose files.
+
+    PyYAML follows YAML 1.1: an unquoted `22:22` is the base-60 integer 1342, and
+    `yes`/`no`/`on`/`off` are booleans (so `OFF: 1` becomes the key `False`). Here only
+    `true`/`false` are booleans and `22:22` stays a string; boolean settings still
+    accept `yes`/`no`/`on`/`off` through `_as_bool`.
+    """
+
+
+def _drop_sexagesimal_resolvers() -> None:
+    resolvers = {}
+    for first, entries in yaml.SafeLoader.yaml_implicit_resolvers.items():
+        kept = [
+            (tag, regexp) for tag, regexp in entries
+            if tag not in ("tag:yaml.org,2002:int", "tag:yaml.org,2002:float",
+                           "tag:yaml.org,2002:bool")
+        ]
+        resolvers[first] = kept
+    # Re-add bool (YAML 1.2) and int/float without their base-60 alternatives.
+    int_re = re.compile(r"""^(?:[-+]?0b[0-1_]+
+                    |[-+]?0[0-7_]+
+                    |[-+]?(?:0|[1-9][0-9_]*)
+                    |[-+]?0x[0-9a-fA-F_]+)$""", re.X)
+    float_re = re.compile(r"""^(?:[-+]?(?:[0-9][0-9_]*)\.[0-9_]*(?:[eE][-+][0-9]+)?
+                    |\.[0-9][0-9_]*(?:[eE][-+][0-9]+)?
+                    |[-+]?\.(?:inf|Inf|INF)
+                    |\.(?:nan|NaN|NAN))$""", re.X)
+    _ComposeYamlLoader.yaml_implicit_resolvers = resolvers
+    _ComposeYamlLoader.add_implicit_resolver(
+        "tag:yaml.org,2002:bool", re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$"), list("tTfF"))
+    _ComposeYamlLoader.add_implicit_resolver("tag:yaml.org,2002:int", int_re, list("-+0123456789"))
+    _ComposeYamlLoader.add_implicit_resolver("tag:yaml.org,2002:float", float_re, list("-+0123456789."))
+
+
+_drop_sexagesimal_resolvers()
+
+
+class _Reset:
+    """`!reset`: drop the value inherited from earlier files (Compose merge tag)."""
+
+
+class _Override:
+    """`!override`: replace the inherited value instead of merging into it."""
+
+    def __init__(self, value):
+        self.value = value
+
+
+def _construct_tagged(loader, node):
+    if isinstance(node, yaml.MappingNode):
+        return loader.construct_mapping(node, deep=True)
+    if isinstance(node, yaml.SequenceNode):
+        return loader.construct_sequence(node, deep=True)
+    return loader.construct_scalar(node)
+
+
+_ComposeYamlLoader.add_constructor("!reset", lambda loader, node: _Reset())
+_ComposeYamlLoader.add_constructor(
+    "!override", lambda loader, node: _Override(_construct_tagged(loader, node)))
+
+
+def _strip_merge_tags(node):
+    """Apply the `!reset` / `!override` tags left after merging (or in a single file)."""
+    if isinstance(node, _Override):
+        return _strip_merge_tags(node.value)
+    if isinstance(node, dict):
+        return {k: _strip_merge_tags(v) for k, v in node.items() if not isinstance(v, _Reset)}
+    if isinstance(node, list):
+        return [_strip_merge_tags(v) for v in node if not isinstance(v, _Reset)]
+    return node
+
+
+def _yaml_load(fh, path: str):
+    try:
+        return yaml.load(fh, Loader=_ComposeYamlLoader)  # noqa: S506 - SafeLoader subclass
+    except yaml.YAMLError as exc:
+        raise ComposeError(f"{path}: invalid YAML: {exc}") from exc
+
+
+_TRUE = ("true", "yes", "on", "1")
+_FALSE = ("false", "no", "off", "0", "")
+
+
+def _as_bool(value, what: str) -> bool:
+    """Compose boolean: a YAML bool, or a string such as "false" produced by interpolation."""
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, (dict, list)):
+        return bool(value)  # legacy `external: {name: ...}`
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in _TRUE:
+            return True
+        if text in _FALSE:
+            return False
+    raise ComposeError(f"{what}: expected a boolean, got {value!r}")
+
+
+def _scalar(value) -> str:
+    """String form of a YAML scalar as Compose writes it (true, not Python's True)."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
 def find_compose_file(directory: str) -> Optional[str]:
     for name in COMPOSE_FILENAMES:
         path = os.path.join(directory, name)
@@ -60,7 +171,10 @@ def find_compose_file(directory: str) -> Optional[str]:
     return None
 
 
-def load_dotenv(path: str) -> Dict[str, str]:
+def load_dotenv(path: str, environ: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """Read a .env file. `${VAR}` references in unquoted and double-quoted values are
+    expanded from the variables defined above them and the process environment."""
+    environ = dict(os.environ) if environ is None else environ
     env: Dict[str, str] = {}
     if not os.path.isfile(path):
         return env
@@ -73,11 +187,30 @@ def load_dotenv(path: str) -> Dict[str, str]:
             key = key.strip()
             if key.startswith("export "):
                 key = key[len("export "):].strip()
-            value = value.strip()
-            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-                value = value[1:-1]
-            env[key] = value
+            raw_value = value.strip()
+            parsed = _dotenv_value(raw_value)
+            if not raw_value.startswith("'"):
+                parsed = interpolate(parsed, {**env, **environ}, dotenv=True)
+            env[key] = parsed
     return env
+
+
+def _dotenv_value(value: str) -> str:
+    """Strip quotes and inline comments like Docker Compose's .env reader.
+
+    A quoted value ends at its closing quote (anything after it, e.g. `# comment`, is
+    dropped); an unquoted value ends before ` #`. Escapes and `${VAR}` references are
+    kept literally (Windows paths such as `C:\\new` must not change meaning).
+    """
+    if value[:1] in ("\"", "'"):
+        if len(value) >= 2 and value[-1] == value[0]:
+            return value[1:-1]  # fully quoted (unchanged behaviour)
+        end = value.find(value[0], 1)
+        if end > 0 and value[end + 1:].lstrip().startswith("#"):
+            return value[1:end]  # "value" # comment
+        return value
+    comment = re.search(r"\s#", value)
+    return value[:comment.start()].rstrip() if comment else value
 
 
 def normalize_project_name(raw: str) -> str:
@@ -110,7 +243,7 @@ def _parse_healthcheck(value) -> Optional[HealthCheck]:
         return None
     if not isinstance(value, dict):
         raise ComposeError("healthcheck: expected mapping")
-    disabled = bool(value.get("disable", False))
+    disabled = _as_bool(value.get("disable", False), "healthcheck.disable")
     test = value.get("test", [])
     if isinstance(test, str):
         test = ["CMD-SHELL", test]
@@ -142,7 +275,7 @@ def _as_mapping(value, what: str) -> Dict[str, str]:
         return result
     if isinstance(value, dict):
         for k, v in value.items():
-            result[str(k)] = "" if v is None else str(v)
+            result[str(k)] = "" if v is None else _scalar(v)
         return result
     if isinstance(value, list):
         for item in value:
@@ -158,7 +291,7 @@ def _as_environment(value) -> Dict[str, Optional[str]]:
         return result
     if isinstance(value, dict):
         for k, v in value.items():
-            result[str(k)] = None if v is None else str(v)
+            result[str(k)] = None if v is None else _scalar(v)
         return result
     if isinstance(value, list):
         for item in value:
@@ -173,15 +306,29 @@ def parse_port(spec) -> List[PortMapping]:
         target = int(spec["target"])
         published = spec.get("published")
         host_ip = spec.get("host_ip")
-        pub = str(published) if published is not None else None
-        if host_ip and pub:
-            pub = f"{host_ip}:{pub}"
+        pub = str(published) if published not in (None, "") else None
+        if host_ip:
+            host_ip = str(host_ip)
+            if ":" in host_ip and not host_ip.startswith("["):
+                host_ip = f"[{host_ip}]"  # IPv6
+            pub = f"{host_ip}:{pub or ''}"  # "ip:" = that address, random host port
         return [PortMapping(target, pub, str(spec.get("protocol", "tcp")))]
 
     text = str(spec)
     protocol = "tcp"
     if "/" in text:
         text, protocol = text.rsplit("/", 1)
+
+    if text.startswith("["):  # IPv6 host address: [::1]:8080:80, [::1]::80
+        close = text.find("]")
+        rest = text[close + 1:]
+        if close == -1 or not rest.startswith(":") or rest.count(":") != 2:
+            raise ComposeError(f"invalid port mapping: {spec!r}")
+        ip6 = text[:close + 1]
+        host_ports, target = rest[1:].split(":")
+        mapped = parse_port(f"{host_ports or '0'}:{target}/{protocol}")
+        return [PortMapping(m.target, f"{ip6}:{m.published if host_ports else ''}", protocol)
+                for m in mapped]
 
     parts = text.split(":")
     if len(parts) == 1:
@@ -194,10 +341,13 @@ def parse_port(spec) -> List[PortMapping]:
         raise ComposeError(f"invalid port mapping: {spec!r}")
 
     def expand(rng: str) -> List[int]:
-        if "-" in rng:
-            lo, hi = rng.split("-", 1)
-            return list(range(int(lo), int(hi) + 1))
-        return [int(rng)]
+        try:
+            if "-" in rng:
+                lo, hi = rng.split("-", 1)
+                return list(range(int(lo), int(hi) + 1))
+            return [int(rng)]
+        except ValueError:
+            raise ComposeError(f"invalid port mapping: {spec!r}") from None
 
     targets = expand(target)
     if host is None:
@@ -207,6 +357,8 @@ def parse_port(spec) -> List[PortMapping]:
     if host.count(":") == 1:  # ip:port form
         ip_prefix, host_ports = host.split(":", 1)
         ip_prefix += ":"
+        if not host_ports:  # "ip::target": that address, random host port
+            return [PortMapping(t, ip_prefix, protocol) for t in targets]
     hosts = expand(host_ports)
     if len(hosts) != len(targets):
         raise ComposeError(f"port range mismatch in {spec!r}")
@@ -236,7 +388,7 @@ def _split_volume_spec(spec: str) -> Tuple[str, ...]:
 
 def _is_host_path(source: str) -> bool:
     return (
-        source.startswith(("/", "./", "../", "~", "\\\\"))
+        source.startswith(("/", "./", "../", "~", "\\\\", ".\\", "..\\"))
         or source in (".", "..")
         or bool(_WIN_PATH_RE.match(source))
     )
@@ -249,12 +401,14 @@ def parse_volume(spec, project_dir: str) -> VolumeMount:
         target = spec.get("target")
         if not target:
             raise ComposeError(f"volume entry missing target: {spec!r}")
-        read_only = bool(spec.get("read_only", False))
+        read_only = _as_bool(spec.get("read_only", False), "volumes.read_only")
         if vtype == "bind" and source:
             source = _resolve_bind_source(source, project_dir)
         options = []
         for section in ("bind", "volume", "tmpfs"):
             for key, value in (spec.get(section) or {}).items():
+                if isinstance(value, str) and value.strip().lower() in ("yes", "on", "no", "off"):
+                    value = value.strip().lower() in ("yes", "on")  # YAML 1.1 spellings
                 if isinstance(value, bool):
                     value = str(value).lower()
                 options.append(f"{key}={value}")
@@ -280,6 +434,8 @@ def parse_volume(spec, project_dir: str) -> VolumeMount:
 def _resolve_bind_source(source: str, project_dir: str) -> str:
     if _WIN_PATH_RE.match(source) or source.startswith("\\\\"):
         return source  # already a Windows path, hand to wslc as-is
+    if source.startswith((".\\", "..\\")) or source in (".", ".."):
+        source = source.replace("\\", "/")  # Windows-style relative path
     source = os.path.expanduser(source)
     if not os.path.isabs(source):
         source = os.path.normpath(os.path.join(project_dir, source))
@@ -292,8 +448,8 @@ DEPENDS_ON_CONDITIONS = ("service_started", "service_healthy", "service_complete
 def _parse_required(name: str, value) -> bool:
     if isinstance(value, bool):
         return value
-    if isinstance(value, str) and value.lower() in ("true", "false"):
-        return value.lower() == "true"
+    if isinstance(value, str) and value.strip().lower() in ("true", "false", "yes", "no"):
+        return value.strip().lower() in ("true", "yes")
     raise ComposeError(f"depends_on.{name}.required: expected true or false, got {value!r}")
 
 
@@ -340,6 +496,26 @@ def _capabilities(service: str, key: str, value) -> List[str]:
     return result
 
 
+def _parse_env_files(value, project_dir: str, service: str) -> List[str]:
+    """`env_file`: a path, or a list of paths / `{path, required}` mappings."""
+    entries = value if isinstance(value, list) else ([] if value is None else [value])
+    paths: List[str] = []
+    for entry in entries:
+        required = True
+        if isinstance(entry, dict):
+            if not entry.get("path"):
+                raise ComposeError(f"service {service!r}: env_file entries need a 'path'")
+            required = _as_bool(entry.get("required", True), f"service {service!r}: env_file.required")
+            entry = entry["path"]
+        path = _resolve_bind_source(str(entry), project_dir)
+        foreign_windows_path = os.name != "nt" and (
+            bool(_WIN_PATH_RE.match(path)) or path.startswith("\\\\"))
+        if not required and not foreign_windows_path and not os.path.isfile(path):
+            continue
+        paths.append(path)
+    return paths
+
+
 def _parse_build(value, project_dir: str) -> BuildConfig:
     if isinstance(value, str):
         return BuildConfig(context=_resolve_bind_source(value, project_dir))
@@ -354,18 +530,24 @@ def _parse_build(value, project_dir: str) -> BuildConfig:
         dockerfile=value.get("dockerfile"),
         args=_as_mapping(value.get("args"), "build.args"),
         target=value.get("target"),
-        pull=bool(value.get("pull", False)),
-        no_cache=bool(value.get("no_cache", False)),
+        pull=_as_bool(value.get("pull", False), "build.pull"),
+        no_cache=_as_bool(value.get("no_cache", False), "build.no_cache"),
     )
 
 _MERGED_SECTIONS = ("services", "networks", "volumes", "secrets", "configs")
 
 
 def _rebase(path: str, base_dir: str) -> str:
-    """Make a relative host path (starting with '.') absolute against `base_dir`."""
-    if path.startswith("."):
-        return os.path.normpath(os.path.join(base_dir, path))
-    return path
+    """Make a relative host path absolute against `base_dir`.
+
+    Absolute, `~`, Windows (`C:\\`, UNC) and remote (`https://`, `git@`) paths are kept.
+    """
+    if (os.path.isabs(path) or path.startswith(("~", "\\\\", "git@")) or "://" in path
+            or _WIN_PATH_RE.match(path)):
+        return path
+    if path.startswith((".\\", "..\\")):
+        path = path.replace("\\", "/")
+    return os.path.normpath(os.path.join(base_dir, path))
 
 
 def _rebase_service_paths(services: dict, base_dir: str) -> None:
@@ -373,6 +555,9 @@ def _rebase_service_paths(services: dict, base_dir: str) -> None:
     for cfg in services.values():
         if not isinstance(cfg, dict):
             continue
+        extends = cfg.get("extends")
+        if isinstance(extends, dict) and isinstance(extends.get("file"), str):
+            cfg["extends"] = {**extends, "file": _rebase(extends["file"], base_dir)}
         build = cfg.get("build")
         if isinstance(build, str):
             cfg["build"] = _rebase(build, base_dir)
@@ -382,7 +567,12 @@ def _rebase_service_paths(services: dict, base_dir: str) -> None:
         if isinstance(env_file, str):
             cfg["env_file"] = _rebase(env_file, base_dir)
         elif isinstance(env_file, list):
-            cfg["env_file"] = [_rebase(f, base_dir) if isinstance(f, str) else f for f in env_file]
+            cfg["env_file"] = [
+                _rebase(f, base_dir) if isinstance(f, str)
+                else {**f, "path": _rebase(f["path"], base_dir)}
+                if isinstance(f, dict) and isinstance(f.get("path"), str) else f
+                for f in env_file
+            ]
         volumes = cfg.get("volumes")
         if isinstance(volumes, list):
             rebased = []
@@ -390,10 +580,64 @@ def _rebase_service_paths(services: dict, base_dir: str) -> None:
                 if isinstance(vol, str) and vol.startswith("."):
                     source, sep, rest = vol.partition(":")
                     vol = _rebase(source, base_dir) + sep + rest
-                elif isinstance(vol, dict) and isinstance(vol.get("source"), str):
+                elif (isinstance(vol, dict) and isinstance(vol.get("source"), str)
+                      and (vol.get("type") == "bind" or vol["source"].startswith("."))):
                     vol = {**vol, "source": _rebase(vol["source"], base_dir)}
                 rebased.append(vol)
             cfg["volumes"] = rebased
+
+
+def _resolve_extends(services: dict, main_file: str) -> None:
+    """Expand `extends:` in place: the base service's settings, overlaid by the local ones.
+
+    `extends: name`, `{service: name}` or `{service: name, file: other.yaml}` (relative
+    paths of a service taken from another directory are anchored to that file).
+    """
+    base_dir = os.path.dirname(main_file)
+    cache: Dict[Tuple[str, str], dict] = {}
+
+    def load(path: str) -> dict:
+        raw = _strip_merge_tags(_read_compose(path))
+        found = raw.get("services") or {}
+        if os.path.dirname(path) != base_dir:
+            _rebase_service_paths(found, os.path.dirname(path))
+        return found
+
+    def resolve(name: str, pool: dict, where: str, stack: Tuple[Tuple[str, str], ...]) -> dict:
+        key = (where, name)
+        if key in cache:
+            return cache[key]
+        if key in stack:
+            chain = " -> ".join(n for _, n in stack + (key,))
+            raise ComposeError(f"circular extends: {chain}")
+        cfg = pool.get(name)
+        if not isinstance(cfg, dict):
+            raise ComposeError(f"extends: service {name!r} not found in {where}")
+        extends = cfg.get("extends")
+        if extends is None:
+            cache[key] = cfg
+            return cfg
+        if isinstance(extends, str):
+            extends = {"service": extends}
+        if not isinstance(extends, dict) or not extends.get("service"):
+            raise ComposeError(f"service {name!r}: extends needs a 'service'")
+        base_pool, base_where = pool, where
+        if extends.get("file"):
+            path = str(extends["file"])
+            path = path if os.path.isabs(path) else os.path.join(os.path.dirname(where), path)
+            path = os.path.abspath(path)
+            if not os.path.isfile(path):
+                raise ComposeError(f"service {name!r}: extends file not found: {extends['file']}")
+            base_pool, base_where = load(path), path
+        base = resolve(str(extends["service"]), base_pool, base_where, stack + (key,))
+        local = {k: v for k, v in cfg.items() if k != "extends"}
+        merged = _merge_dicts(copy.deepcopy({k: v for k, v in base.items() if k != "extends"}), local)
+        cache[key] = merged
+        return merged
+
+    for name in list(services):
+        if isinstance(services[name], dict) and "extends" in services[name]:
+            services[name] = resolve(name, services, main_file, ())
 
 
 def _include_paths(entry, compose_file: str) -> List[str]:
@@ -418,7 +662,7 @@ def _read_compose(path: str, stack: Tuple[str, ...] = ()) -> dict:
         chain = " -> ".join(stack + (path,))
         raise ComposeError(f"circular include: {chain}")
     with open(path, encoding="utf-8") as fh:
-        raw = yaml.safe_load(fh)
+        raw = _yaml_load(fh, path)
     if not isinstance(raw, dict):
         raise ComposeError(f"{path}: not a valid compose file")
     includes = raw.pop("include", None) or []
@@ -507,7 +751,12 @@ def _merge_value(key, base, over):
 def _merge_dicts(base: dict, over: dict) -> dict:
     result = dict(base)
     for key, value in over.items():
-        result[key] = _merge_value(key, result[key], value) if key in result else value
+        if isinstance(value, _Reset):
+            result.pop(key, None)
+        elif isinstance(value, _Override):
+            result[key] = value.value
+        else:
+            result[key] = _merge_value(key, result[key], value) if key in result else value
     return result
 
 
@@ -518,7 +767,11 @@ def merge_compose(base: dict, override: dict) -> dict:
         if key in ("services", "networks", "volumes", "secrets", "configs") and key in result:
             merged = dict(result[key] or {})
             for name, cfg in (value or {}).items():
-                if name in merged and isinstance(merged[name], dict) and isinstance(cfg, dict):
+                if isinstance(cfg, _Reset):
+                    merged.pop(name, None)
+                elif isinstance(cfg, _Override):
+                    merged[name] = cfg.value
+                elif name in merged and isinstance(merged[name], dict) and isinstance(cfg, dict):
                     merged[name] = _merge_dicts(merged[name], cfg)
                 else:
                     merged[name] = cfg
@@ -586,7 +839,7 @@ def _parse_file_resources(kind, value, project_dir: str):
     for key, cfg in value.items():
         if not isinstance(cfg, dict):
             raise ComposeError(f"{label} {key!r}: expected a mapping with a 'file' source")
-        if cfg.get("external"):
+        if _as_bool(cfg.get("external"), f"{label} {key!r}: external"):
             raise ComposeError(
                 f"{label} {key!r}: external {kind} are not supported by wslc; use a file"
             )
@@ -611,17 +864,21 @@ def _parse_network(key: str, cfg, project_name: str) -> Network:
     cfg = {} if cfg is None else cfg
     if not isinstance(cfg, dict):
         raise ComposeError(f"networks.{key}: expected mapping")
-    external = bool(cfg.get("external", False))
+    external = _as_bool(cfg.get("external", False), f"networks.{key}.external")
     name = cfg.get("name") or (key if external else f"{project_name}_{key}")
     network = Network(key=key, name=str(name), external=external,
-                      internal=bool(cfg.get("internal", False)), driver=cfg.get("driver"),
+                      internal=_as_bool(cfg.get("internal", False), f"networks.{key}.internal"),
+                      driver=cfg.get("driver"),
                       driver_opts=_as_mapping(cfg.get("driver_opts"), "network driver_opts"),
                       labels=_as_mapping(cfg.get("labels"), "network labels"))
     for option in cfg:
         if option not in {"name", "external", "internal", "driver", "driver_opts", "labels",
                           "ipam", "enable_ipv4", "enable_ipv6", "attachable"} and not str(option).startswith("x-"):
             raise ComposeError(f"networks.{key}: unsupported setting {option!r}")
-    if cfg.get("enable_ipv6") or cfg.get("enable_ipv4") is False or cfg.get("attachable"):
+    ipv4_disabled = cfg.get("enable_ipv4") is not None and not _as_bool(
+        cfg["enable_ipv4"], f"networks.{key}.enable_ipv4")
+    if (_as_bool(cfg.get("enable_ipv6"), f"networks.{key}.enable_ipv6") or ipv4_disabled
+            or _as_bool(cfg.get("attachable"), f"networks.{key}.attachable")):
         raise ComposeError(f"networks.{key}: WSLC supports IPv4 networks without attachable mode")
     ipam = {} if cfg.get("ipam") is None else cfg["ipam"]
     if not isinstance(ipam, dict):
@@ -676,16 +933,24 @@ def load_project(
     project_dir = os.path.dirname(compose_file)
 
     dotenv_path = env_file or os.path.join(project_dir, ".env")
-    env = dict(load_dotenv(dotenv_path))
+    try:
+        env = dict(load_dotenv(dotenv_path))
+    except InterpolationError as exc:
+        raise ComposeError(f"{dotenv_path}: {exc}") from None
     env.update(os.environ)  # process env wins
 
     raw = _read_compose(compose_files[0])
     for extra in compose_files[1:]:
         raw = merge_compose(raw, _read_compose(extra))
+    raw = _strip_merge_tags(raw)
     if not raw.get("services"):
         where = compose_file if len(compose_files) == 1 else ", ".join(compose_files)
         raise ComposeError(f"{where}: no 'services' section found")
-    raw = interpolate_tree(raw, env)
+    _resolve_extends(raw["services"], compose_file)
+    try:
+        raw = interpolate_tree(raw, env)
+    except InterpolationError as exc:
+        raise ComposeError(str(exc)) from None
 
     name = normalize_project_name(
         project_name
@@ -710,7 +975,7 @@ def load_project(
     raw_volumes = raw.get("volumes") or {}
     for key, cfg in raw_volumes.items():
         cfg = cfg or {}
-        external = bool(cfg.get("external", False))
+        external = _as_bool(cfg.get("external", False), f"volumes.{key}.external")
         vol_name = cfg.get("name") or (key if external else f"{name}_{key}")
         project.volumes[key] = Volume(key=key, name=vol_name, external=external,
                                       driver=cfg.get("driver"),
@@ -739,11 +1004,13 @@ def load_project(
         svc.command = _as_command(cfg.get("command"))
         svc.entrypoint = _as_command(cfg.get("entrypoint"))
         svc.container_name = cfg.get("container_name")
-        svc.environment = _as_environment(cfg.get("environment"))
-        svc.env_files = [
-            f if os.path.isabs(f) else os.path.join(project_dir, f)
-            for f in _as_list(cfg.get("env_file"))
-        ]
+        svc.environment = {
+            # `FOO` without a value takes it from the shell / .env like Docker Compose;
+            # wslc.exe launched from WSL cannot see the Linux environment itself.
+            key: env.get(key) if value is None else value
+            for key, value in _as_environment(cfg.get("environment")).items()
+        }
+        svc.env_files = _parse_env_files(cfg.get("env_file"), project_dir, svc_name)
         for spec in cfg.get("ports") or []:
             svc.ports.extend(parse_port(spec))
         for spec in cfg.get("volumes") or []:
@@ -837,8 +1104,8 @@ def load_project(
         if cfg.get("stop_grace_period") is not None:
             svc.stop_timeout_seconds = _duration_seconds(cfg["stop_grace_period"])
         svc.shm_size = str(cfg["shm_size"]) if cfg.get("shm_size") is not None else None
-        svc.stdin_open = bool(cfg.get("stdin_open", False))
-        svc.tty = bool(cfg.get("tty", False))
+        svc.stdin_open = _as_bool(cfg.get("stdin_open", False), f"service {svc_name!r}: stdin_open")
+        svc.tty = _as_bool(cfg.get("tty", False), f"service {svc_name!r}: tty")
         svc.secrets, secret_warnings = _parse_file_mounts(
             cfg.get("secrets"), "secrets", project.secrets, "/run/secrets/", svc_name
         )
@@ -886,8 +1153,14 @@ def load_project(
         svc.mem_limit = limits.get("memory", svc.mem_limit)
         if limits.get("cpus") is not None:
             svc.cpus = str(limits["cpus"])
-        if deploy.get("replicas"):
-            svc.replicas = int(deploy["replicas"])
+        if deploy.get("replicas") is not None:
+            try:
+                svc.replicas = int(deploy["replicas"])
+            except (TypeError, ValueError):
+                raise ComposeError(
+                    f"service {svc_name!r}: deploy.replicas must be a number") from None
+            if svc.replicas < 0:
+                raise ComposeError(f"service {svc_name!r}: deploy.replicas cannot be negative")
         reservations = (deploy.get("resources") or {}).get("reservations") or {}
         for device in reservations.get("devices") or []:
             if "gpu" in (device.get("capabilities") or []):

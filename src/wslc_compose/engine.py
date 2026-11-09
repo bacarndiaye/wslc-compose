@@ -52,7 +52,7 @@ def _is_self(path: str) -> bool:
 def find_wslc() -> str:
     override = os.environ.get("WSLC_COMPOSE_BIN")
     if override:
-        return override
+        return override  # trusted as-is; a wrong path is reported by run()/popen()
     for path in WSLC_FALLBACKS:
         if os.path.isfile(path):
             return path
@@ -114,14 +114,17 @@ def run(
     if dry_run:
         print("+ " + " ".join(argv))
         return subprocess.CompletedProcess(argv, 0, "", "")
-    proc = subprocess.run(
-        argv,
-        check=False,
-        capture_output=capture,
-        text=capture,
-        encoding="utf-8" if capture else None,
-        errors="replace" if capture else None,
-    )
+    try:
+        proc = subprocess.run(
+            argv,
+            check=False,
+            capture_output=capture,
+            text=capture,
+            encoding="utf-8" if capture else None,
+            errors="replace" if capture else None,
+        )
+    except OSError as exc:
+        raise WslcError(f"cannot run {argv[0]}: {exc}") from exc
     if check and proc.returncode != 0:
         detail = (proc.stderr or "").strip() if capture else ""
         raise WslcError(
@@ -169,7 +172,11 @@ def popen(args: List[str], **kwargs) -> subprocess.Popen:
     if kwargs.get("text") or kwargs.get("universal_newlines"):
         kwargs.setdefault("encoding", "utf-8")
         kwargs.setdefault("errors", "replace")
-    return subprocess.Popen([find_wslc()] + args, **kwargs)
+    argv = [find_wslc()] + args
+    try:
+        return subprocess.Popen(argv, **kwargs)
+    except OSError as exc:
+        raise WslcError(f"cannot run {argv[0]}: {exc}") from exc
 
 
 def _host_gateway_hint(code: int) -> str:
@@ -253,14 +260,43 @@ def _names_from_json(args: List[str]) -> List[str]:
     return [entry["Name"] for entry in capture_json(args) if entry.get("Name")]
 
 
+def image_entrypoint(name: str) -> Optional[List[str]]:
+    """ENTRYPOINT of a local image ([] when it has none), or None if it is not present."""
+    try:
+        images = capture_json(["image", "inspect", name])
+    except WslcError:
+        return None
+    if not images or not isinstance(images[0], dict):
+        return None
+    return list((images[0].get("Config") or {}).get("Entrypoint") or [])
+
+
+def split_image_name(name: str):
+    """(repository, tag) — the tag is after the last ':' that follows the last '/'
+    (`localhost:5000/app:1.0` → `localhost:5000/app`, `1.0`); no tag means `latest`."""
+    name = name.split("@", 1)[0]
+    head, slash, last = name.rpartition("/")
+    repo_last, colon, tag = last.partition(":")
+    return head + slash + repo_last, (tag if colon else "latest")
+
+
+def _short_repository(repo: str) -> str:
+    """`docker.io/library/nginx` and `nginx` designate the same local image."""
+    for prefix in ("docker.io/library/", "docker.io/", "index.docker.io/library/"):
+        if repo.startswith(prefix):
+            return repo[len(prefix):]
+    return repo[len("library/"):] if repo.startswith("library/") else repo
+
+
 def image_exists(name: str) -> bool:
-    repo, _, tag = name.partition(":")
+    repo, tag = split_image_name(name)
     try:
         images = capture_json(["images", "--format", "json"])
     except WslcError:
         return False
     for img in images if isinstance(images, list) else []:
-        if img.get("Repository") == repo and (not tag or img.get("Tag") == tag):
+        if (_short_repository(str(img.get("Repository") or "")) == _short_repository(repo)
+                and img.get("Tag") == tag):
             return True
     return False
 

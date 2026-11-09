@@ -14,3 +14,6 @@ LABEL_NETWORK = "com.wslc-compose.network"
 LABEL_VOLUME = "com.wslc-compose.volume"
 LABEL_CREATE_OPERATION = "com.wslc-compose.create-operation"
 LABEL_HOST_GATEWAY = "com.wslc-compose.host-gateway-compat"
+# Digest of settings kept outside the shared v2 config hash (env_file contents, mount
+# options, `entrypoint: []` / `command: []`); absent on containers made before 0.6.0.
+LABEL_LOCAL_CONFIG = "com.wslc-compose.local-config-hash"

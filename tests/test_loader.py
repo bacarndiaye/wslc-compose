@@ -768,3 +768,349 @@ def test_restart_policy_parsing(tmp_path, value, expected, warns):
     project = _deps(tmp_path, f"services:\n  a:\n    image: x\n    restart: {value}\n")
     assert project.services["a"].restart == expected
     assert any("restart policy" in w for w in project.warnings) is warns
+
+
+# --- audit fixes (#42 #43 #44 #46 #47 #48 #49 #54) ----------------------------
+
+
+def _one(tmp_path, body, files=None, env=None, monkeypatch=None):
+    (tmp_path / "compose.yaml").write_text(body)
+    for name, text in (files or {}).items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    if monkeypatch is not None:
+        for key, value in (env or {}).items():
+            monkeypatch.setenv(key, value)
+    return load_project(str(tmp_path / "compose.yaml"))
+
+
+def test_interpolated_booleans_are_parsed(tmp_path, monkeypatch):
+    project = _one(tmp_path, """
+name: t
+services:
+  a:
+    image: alpine
+    tty: ${TTY:-false}
+    stdin_open: "${STDIN:-true}"
+    networks: [n]
+    volumes:
+      - type: bind
+        source: ./d
+        target: /d
+        read_only: ${RO:-false}
+networks:
+  n:
+    external: ${EXT:-false}
+    internal: "no"
+""")
+    a = project.services["a"]
+    assert (a.tty, a.stdin_open, a.volumes[0].read_only) == (False, True, False)
+    assert project.networks["n"].external is False
+    assert project.networks["n"].name == "t_n"
+    assert project.networks["n"].internal is False
+
+
+def test_invalid_boolean_is_rejected(tmp_path):
+    with pytest.raises(ComposeError, match="tty: expected a boolean"):
+        _one(tmp_path, "services:\n  a:\n    image: alpine\n    tty: maybe\n")
+
+
+def test_legacy_external_mapping_still_means_external(tmp_path):
+    project = _one(tmp_path, """
+services:
+  a: {image: alpine, networks: [n]}
+networks:
+  n:
+    external: {name: shared}
+    name: shared
+""")
+    assert project.networks["n"].external is True
+
+
+def test_yaml_booleans_are_written_like_compose(tmp_path):
+    project = _one(tmp_path, """
+services:
+  a:
+    image: alpine
+    environment: {DEBUG: true, OFF: false, N: 3, FEATURE: yes, ON: on}
+    labels: {x.enabled: true}
+    restart: no
+    tty: yes
+    volumes:
+      - type: bind
+        source: ./d
+        target: /d
+        bind: {create_host_path: yes}
+""")
+    a = project.services["a"]
+    # YAML 1.2 like Docker Compose: only true/false are booleans
+    assert a.environment == {"DEBUG": "true", "OFF": "false", "N": "3", "FEATURE": "yes", "ON": "on"}
+    assert a.labels == {"x.enabled": "true"}
+    assert a.restart == "no"
+    assert a.tty is True  # boolean settings still accept yes/no
+    assert a.volumes[0].options == ["create_host_path=true"]
+
+
+def test_unquoted_port_is_not_read_as_base60(tmp_path):
+    project = _one(tmp_path, "services:\n  a:\n    image: alpine\n    ports:\n      - 22:22\n      - 8080\n")
+    assert [p.to_flag() for p in project.services["a"].ports] == ["22:22", "8080"]
+
+
+def test_yaml_numbers_still_parse(tmp_path):
+    project = _one(tmp_path, """
+services:
+  a:
+    image: alpine
+    environment: {I: 10, F: 1.5, O: 0x1F, NEG: -3}
+    deploy: {replicas: 2}
+""")
+    a = project.services["a"]
+    assert a.environment == {"I": "10", "F": "1.5", "O": "31", "NEG": "-3"}
+    assert a.replicas == 2
+
+
+def test_invalid_yaml_is_a_compose_error(tmp_path):
+    with pytest.raises(ComposeError, match="invalid YAML"):
+        _one(tmp_path, "services:\n  a:\n    image: [alpine\n")
+    with pytest.raises(ComposeError, match="invalid YAML"):
+        _one(tmp_path, "services:\n  a:\n    image: !unknown alpine\n")
+
+
+def test_reset_and_override_merge_tags(tmp_path):
+    base = tmp_path / "compose.yaml"
+    base.write_text("""
+services:
+  a:
+    image: alpine
+    ports: ["8080:80"]
+    environment: {A: "1", B: "2"}
+    labels: {x: "1"}
+  gone: {image: alpine}
+""")
+    over = tmp_path / "override.yaml"
+    over.write_text("""
+services:
+  a:
+    ports: !reset []
+    environment: !override {C: "3"}
+    labels: !reset null
+  gone: !reset
+""")
+    project = load_project([str(base), str(over)])
+    a = project.services["a"]
+    assert (a.ports, a.environment, a.labels) == ([], {"C": "3"}, {})
+    assert "gone" not in project.services
+
+
+def test_merge_tags_in_a_single_file(tmp_path):
+    # without a file to merge into, the tags only unwrap or drop their value
+    project = _one(tmp_path, "services:\n  a:\n    image: !override alpine\n    ports: !reset [\"1:1\"]\n"
+                             "    dns: [!reset 1.1.1.1, 8.8.8.8]\n")
+    a = project.services["a"]
+    assert (a.image, a.ports, a.dns) == ("alpine", [], ["8.8.8.8"])
+
+
+def test_include_rebases_relative_paths_without_dot(tmp_path):
+    (tmp_path / "compose.yaml").write_text("include: [sub/compose.yaml]\nservices:\n  main: {image: alpine}\n")
+    sub = tmp_path / "sub"
+    (sub / "ctx").mkdir(parents=True)
+    (sub / "tok.txt").write_text("x")
+    (sub / "common.env").write_text("A=1\n")
+    (sub / "compose.yaml").write_text("""
+services:
+  s:
+    build: ctx
+    env_file: common.env
+    secrets: [tok]
+    volumes:
+      - type: bind
+        source: data
+        target: /data
+      - named:/v
+volumes:
+  named:
+secrets:
+  tok: {file: tok.txt}
+""")
+    project = load_project(str(tmp_path / "compose.yaml"))
+    s = project.services["s"]
+    assert s.build.context == str(sub / "ctx")
+    assert s.env_files == [str(sub / "common.env")]
+    assert project.secrets["tok"].file == str(sub / "tok.txt")
+    assert s.volumes[0].source == str(sub / "data")
+    assert s.volumes[1].type == "volume"  # short syntax `named:` stays a named volume
+
+
+def test_windows_style_relative_bind(tmp_path):
+    project = _one(tmp_path, "services:\n  a:\n    image: alpine\n    volumes: ['.\\\\data:/data']\n")
+    mount = project.services["a"].volumes[0]
+    assert (mount.type, mount.source) == ("bind", str(tmp_path / "data"))
+
+
+def test_deploy_replicas_zero(tmp_path):
+    project = _one(tmp_path, "services:\n  a:\n    image: alpine\n    deploy: {replicas: 0}\n")
+    assert project.services["a"].replicas == 0
+
+
+def test_env_file_paths_and_long_syntax(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    project = _one(tmp_path, r"""
+services:
+  a:
+    image: alpine
+    env_file:
+      - C:\cfg\app.env
+      - ~/app.env
+      - path: ./present.env
+      - path: ./missing.env
+        required: false
+      - path: ./required-missing.env
+""", files={"present.env": "A=1\n"})
+    assert project.services["a"].env_files == [
+        "C:\\cfg\\app.env",
+        str(tmp_path / "home" / "app.env"),
+        str(tmp_path / "present.env"),
+        str(tmp_path / "required-missing.env"),  # still handed to wslc, which reports it
+    ]
+
+
+def test_dotenv_inline_comments(tmp_path):
+    (tmp_path / ".env").write_text(
+        'TAG=3.20 # pinned\nQ="hello" # c\nS=\'it\'\nHASH=a#b\nESC="a\\"b"\nWIN="C:\\new"\n')
+    project = _one(tmp_path, """
+services:
+  a:
+    image: alpine:${TAG}
+    environment: {Q: "${Q}", S: "${S}", HASH: "${HASH}", ESC: "${ESC}", WIN: "${WIN}"}
+""")
+    a = project.services["a"]
+    assert a.image == "alpine:3.20"
+    assert a.environment == {"Q": "hello", "S": "it", "HASH": "a#b", "ESC": 'a\\"b', "WIN": "C:\\new"}
+
+
+def test_port_ip_with_random_host_port():
+    assert [p.to_flag() for p in parse_port("127.0.0.1::80")] == ["127.0.0.1::80"]
+    assert [p.to_flag() for p in parse_port({"target": 80, "host_ip": "127.0.0.1"})] == ["127.0.0.1::80"]
+    assert [p.to_flag() for p in parse_port({"target": 80, "host_ip": "127.0.0.1", "published": 8080})] \
+        == ["127.0.0.1:8080:80"]
+    with pytest.raises(ComposeError, match="invalid port mapping"):
+        parse_port("abc:80")
+
+
+def test_environment_without_value_comes_from_shell_or_dotenv(tmp_path, monkeypatch):
+    (tmp_path / ".env").write_text("FROM_DOTENV=d\n")
+    monkeypatch.setenv("FROM_SHELL", "s")
+    monkeypatch.delenv("NOT_SET_ANYWHERE", raising=False)
+    project = _one(tmp_path, """
+services:
+  a:
+    image: alpine
+    environment: [FROM_SHELL, FROM_DOTENV, NOT_SET_ANYWHERE]
+""")
+    assert project.services["a"].environment == {
+        "FROM_SHELL": "s", "FROM_DOTENV": "d", "NOT_SET_ANYWHERE": None}
+
+
+def test_extends_same_file_and_other_file(tmp_path):
+    (tmp_path / "common").mkdir()
+    (tmp_path / "common" / "base.yaml").write_text("""
+services:
+  base:
+    image: alpine
+    env_file: base.env
+    environment: {LEVEL: base, KEEP: "1"}
+    ports: ["8080:80"]
+""")
+    project = _one(tmp_path, """
+services:
+  root:
+    image: busybox
+    environment: {ROOT: "1"}
+  mid:
+    extends: root
+    command: ["echo", "mid"]
+  leaf:
+    extends: {service: mid}
+    environment: {LEAF: "1"}
+  remote:
+    extends: {service: base, file: common/base.yaml}
+    environment: {LEVEL: remote}
+    ports: ["9090:90"]
+""")
+    leaf = project.services["leaf"]
+    assert (leaf.image, leaf.command) == ("busybox", ["echo", "mid"])
+    assert leaf.environment == {"ROOT": "1", "LEAF": "1"}
+    remote = project.services["remote"]
+    assert remote.environment == {"LEVEL": "remote", "KEEP": "1"}
+    assert [p.to_flag() for p in remote.ports] == ["8080:80", "9090:90"]
+    assert remote.env_files == [str(tmp_path / "common" / "base.env")]
+
+
+@pytest.mark.parametrize("body, message", [
+    ("services:\n  a: {image: x, extends: b}\n  b: {image: x, extends: a}\n", "circular extends"),
+    ("services:\n  a: {extends: nope}\n", "service 'nope' not found"),
+    ("services:\n  a: {image: x, extends: {file: x.yaml}}\n", "extends needs a 'service'"),
+    ("services:\n  a: {image: x, extends: {service: b, file: missing.yaml}}\n", "extends file not found"),
+])
+def test_extends_errors(tmp_path, body, message):
+    with pytest.raises(ComposeError, match=message):
+        _one(tmp_path, body)
+
+
+def test_extends_file_paths_in_included_file(tmp_path):
+    (tmp_path / "compose.yaml").write_text("include: [sub/compose.yaml]\nservices:\n  main: {image: alpine}\n")
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    (sub / "base.yaml").write_text("services:\n  base: {image: busybox}\n")
+    (sub / "compose.yaml").write_text("services:\n  s:\n    extends: {service: base, file: base.yaml}\n")
+    project = load_project(str(tmp_path / "compose.yaml"))
+    assert project.services["s"].image == "busybox"
+
+
+def test_ipv6_ports():
+    assert [p.to_flag() for p in parse_port("[::1]:8080:80")] == ["[::1]:8080:80"]
+    assert [p.to_flag() for p in parse_port("[::1]::80")] == ["[::1]::80"]
+    assert [p.to_flag() for p in parse_port("[::1]:8080-8081:80-81/udp")] == \
+        ["[::1]:8080:80/udp", "[::1]:8081:81/udp"]
+    assert [p.to_flag() for p in parse_port({"target": 80, "host_ip": "::1", "published": 8080})] == \
+        ["[::1]:8080:80"]
+    with pytest.raises(ComposeError, match="invalid port mapping"):
+        parse_port("[::1]80")
+
+
+def test_dotenv_expands_references_without_breaking_literal_dollars(tmp_path, monkeypatch):
+    monkeypatch.setenv("SHELL_USER", "bob")
+    monkeypatch.delenv("word", raising=False)
+    (tmp_path / ".env").write_text(
+        "BASE=/srv\n"
+        "DATA=${BASE}/data\n"
+        "HOME_DIR=\"/home/${SHELL_USER}\"\n"
+        "LITERAL='${BASE}'\n"
+        "PASS=pa$word\n"
+        "DOUBLE=a$$b\n"
+        "KNOWN=$BASE/x\n"
+        "DEF=${MISSING:-fallback}\n")
+    project = _one(tmp_path, """
+services:
+  a:
+    image: alpine
+    environment: [DATA, HOME_DIR, LITERAL, PASS, DOUBLE, KNOWN, DEF]
+""")
+    assert project.services["a"].environment == {
+        "DATA": "/srv/data", "HOME_DIR": "/home/bob", "LITERAL": "${BASE}",
+        "PASS": "pa$word", "DOUBLE": "a$$b", "KNOWN": "/srv/x", "DEF": "fallback"}
+
+
+def test_required_variable_errors_are_compose_errors(tmp_path):
+    with pytest.raises(ComposeError, match="boom"):
+        _one(tmp_path, "services:\n  a:\n    image: ${NOPE_X:?boom}\n")
+    (tmp_path / ".env").write_text("A=${NOPE_Y:?from dotenv}\n")
+    with pytest.raises(ComposeError, match="from dotenv"):
+        _one(tmp_path, "services:\n  a:\n    image: alpine\n")
+
+
+def test_entrypoint_and_command_reset_are_kept(tmp_path):
+    project = _one(tmp_path, "services:\n  a:\n    image: alpine\n    entrypoint: []\n    command: []\n")
+    a = project.services["a"]
+    assert (a.entrypoint, a.command) == ([], [])

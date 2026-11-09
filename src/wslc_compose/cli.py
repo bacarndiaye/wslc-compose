@@ -16,6 +16,7 @@ import yaml
 
 from wslc_compose import (
     LABEL_CONFIG_HASH,
+    LABEL_LOCAL_CONFIG,
     LABEL_HOST_GATEWAY,
     LABEL_INDEX,
     LABEL_PROJECT,
@@ -30,7 +31,7 @@ from wslc_compose import (
 from wslc_compose.engine import WslcError
 from wslc_compose.loader import ComposeError, find_compose_file, load_project
 from wslc_compose.metadata import resource_labels
-from wslc_compose.model import Project, Service
+from wslc_compose.model import Project, Service, local_config_digest
 
 PROTOCOLS = {6: "tcp", 17: "udp"}
 
@@ -120,6 +121,14 @@ def _runtime_matches(svc: Service, current: dict) -> bool:
     return True
 
 
+def _local_config_matches(svc: Service, current: dict) -> bool:
+    """Settings outside the shared hash (env_file contents, mount options...) vs the
+    container's label. Containers created before 0.6.0 have no label: assumed to match,
+    so upgrading never recreates anything by itself."""
+    recorded = current.get("local_config")
+    return recorded is None or recorded == local_config_digest(svc)
+
+
 def _normalized_caps(values) -> List[str]:
     names = []
     for value in values or []:
@@ -137,7 +146,10 @@ def _select_services(
     for name in names:
         if name not in project.services:
             raise ComposeError(f"no such service: {name}")
-    services = project.sorted_services(names or None)
+    try:
+        services = project.sorted_services(names or None)
+    except ValueError as exc:  # circular depends_on
+        raise ComposeError(str(exc)) from None
     result = []
     for svc in services:
         if svc.profiles and not (set(svc.profiles) & active) and svc.name not in names:
@@ -184,6 +196,7 @@ def _project_containers(project: Project, all_states: bool = False) -> List[dict
                 "networks": (data.get("NetworkSettings") or {}).get("Networks"),
                 "network_mode": (data.get("HostConfig") or {}).get("NetworkMode"),
                 "host_gateway": labels.get(LABEL_HOST_GATEWAY) == "v1",
+                "local_config": labels.get(LABEL_LOCAL_CONFIG),
                 "restart_policy": ((data.get("HostConfig") or {}).get("RestartPolicy") or {}).get("Name"),
                 "cap_add": (data.get("HostConfig") or {}).get("CapAdd"),
                 "cap_drop": (data.get("HostConfig") or {}).get("CapDrop"),
@@ -262,7 +275,13 @@ def cmd_up(ns: argparse.Namespace) -> int:
         name, _, count = spec.partition("=")
         if not count.isdigit():
             raise ComposeError(f"invalid --scale value: {spec!r} (expected service=N)")
+        if name not in project.services:
+            raise ComposeError(f"--scale: no such service: {name}")
         scale[name] = int(count)
+    # Validate before creating anything, so a bad combination never leaves a half-started project.
+    for svc in services:
+        if svc.container_name and scale.get(svc.name, svc.replicas) > 1:
+            raise ComposeError(f"{svc.name}: cannot scale a service with container_name set")
 
     static_addresses = set()
     for svc in services:
@@ -339,10 +358,6 @@ def cmd_up(ns: argparse.Namespace) -> int:
 
     for svc in services:
         replicas = scale.get(svc.name, svc.replicas)
-        if svc.container_name and replicas > 1:
-            raise ComposeError(
-                f"{svc.name}: cannot scale a service with container_name set"
-            )
         blocked_by = [dep for dep in svc.depends_on
                       if dep in failed and dep not in svc.depends_on_optional]
         if blocked_by and replicas > 0:
@@ -355,9 +370,14 @@ def cmd_up(ns: argparse.Namespace) -> int:
                 for dep, condition in svc.depends_on_conditions.items():
                     _info(f"(dry run) would wait for {dep}: {condition}")
             else:
+                for dep in svc.depends_on_conditions:
+                    if dep in failed:  # optional (required: false): a required one skipped svc
+                        _err(f"warning: {svc.name}: optional dependency {dep!r} failed to start; "
+                             "not waiting for it")
                 try:
                     dependencies.wait_for_dependencies(
-                        project, svc, services, timeout=getattr(ns, "wait_timeout", 0) or 0,
+                        project, svc, [s for s in services if s.name not in failed],
+                        timeout=getattr(ns, "wait_timeout", 0) or 0,
                         log=_info,
                         replicas={s.name: scale.get(s.name, s.replicas) for s in services},
                     )
@@ -376,7 +396,8 @@ def cmd_up(ns: argparse.Namespace) -> int:
                                  entry.partition(":")[2].strip().lower() == "host-gateway"
                                  for entry in svc.extra_hosts))
                              and networking.configuration_matches(svc, current)
-                             and _runtime_matches(svc, current))
+                             and _runtime_matches(svc, current)
+                             and _local_config_matches(svc, current))
                     if fresh and current["running"]:
                         _info(f"Container {cname} is up-to-date")
                         continue
@@ -395,6 +416,7 @@ def cmd_up(ns: argparse.Namespace) -> int:
                     engine.run(["remove", "-f", cname], capture=True, dry_run=ns.dry_run)
                 else:
                     _info(f"Creating {cname} ...")
+                _pull_for_command_reset(project, svc, ns.dry_run)
                 if len(svc.networks) > 1 and not svc.network_mode:
                     networking.create_and_start(project, svc, index, ns.dry_run)
                 else:
@@ -504,9 +526,10 @@ def _follow_logs(
     tail: Optional[int] = None,
     timestamps: bool = False,
 ) -> int:
+    # Stopped and crashed containers too: that is when their logs matter most.
     containers = [
         c
-        for c in _project_containers(project)
+        for c in _project_containers(project, all_states=True)
         if not service_names or c["service"] in service_names
     ]
     if not containers:
@@ -545,11 +568,12 @@ def _follow_logs(
     try:
         for thread in threads:
             thread.join()
+        codes = [proc.wait() for proc in procs]
     except KeyboardInterrupt:
         for proc in procs:
             proc.send_signal(signal.SIGTERM)
         return 0
-    return 0
+    return next((code for code in codes if code), 0)
 
 
 def cmd_logs(ns: argparse.Namespace) -> int:
@@ -568,9 +592,10 @@ def cmd_exec(ns: argparse.Namespace) -> int:
     if ns.service not in project.services:
         raise ComposeError(f"no such service: {ns.service}")
     cname = project.container_name(project.services[ns.service], ns.index)
-    args = ["exec"]
+    # stdin stays attached (piped input works with -T); -T only disables the TTY.
+    args = ["exec", "-i"]
     if not ns.no_tty and sys.stdin.isatty():
-        args += ["-i", "-t"]
+        args.append("-t")
     if ns.user:
         args += ["-u", ns.user]
     if ns.workdir:
@@ -581,6 +606,16 @@ def cmd_exec(ns: argparse.Namespace) -> int:
     args += ns.command
     proc = engine.run(args, check=False, dry_run=ns.dry_run)
     return proc.returncode
+
+
+def _pull_for_command_reset(project: Project, svc: Service, dry_run: bool) -> None:
+    """`command: []` restates the image's ENTRYPOINT, which is read from the local image."""
+    if svc.command != [] or svc.entrypoint is not None or dry_run:
+        return
+    image = flags.image_name(project, svc)
+    if engine.image_entrypoint(image) is None:
+        _info(f"Pulling {image} ...")
+        engine.run(["pull", image])
 
 
 def _apply_extra_hosts(container: str, hosts: List[str], dry_run: bool) -> None:
@@ -623,8 +658,9 @@ def _lifecycle(ns: argparse.Namespace, action: str) -> int:
         if action in ("start", "restart"):
             _info(f"Starting {entry['name']} ...")
             engine.run_retried(["start", entry["name"]], dry_run=ns.dry_run)
-            service = project.services[entry["service"]]
-            _apply_extra_hosts(entry["name"], service.extra_hosts, ns.dry_run)
+            service = project.services.get(entry["service"])
+            if service is not None:  # a leftover of a service removed from the file
+                _apply_extra_hosts(entry["name"], service.extra_hosts, ns.dry_run)
     host_gateway.reconcile(project, ns.dry_run,
                            previously_enabled=any(entry.get("host_gateway") for entry in containers))
     return 0
