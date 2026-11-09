@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 — 2026-11-09
+
+No container is recreated by the upgrade: the shared `config-hash` is unchanged.
 
 ### Added
 - `extends:` (same file or `file:`), and the `!reset` / `!override` merge tags, on values,

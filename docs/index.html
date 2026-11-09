@@ -235,7 +235,7 @@
 
 <div class="hero wrap">
   <div class="badge-row">
-    <span class="pill"><span id="latest-version">v0.5.1</span> · Python ≥ 3.9 · MIT</span>
+    <span class="pill"><span id="latest-version">v0.6.0</span> · Python ≥ 3.9 · MIT</span>
     <span class="pill green">Works with the WSL container preview today</span>
   </div>
   <h1><span class="grad">docker-compose</span> for<br>WSL containers</h1>
@@ -245,14 +245,14 @@
     <strong>compose.yaml you already use</strong> with Docker or Podman. No daemon, no lock-in.
   </p>
   <div class="install">
-    <code><span class="p">$</span> pipx install "wslc-compose==<span class="ver">0.5.1</span>"</code>
+    <code><span class="p">$</span> pipx install "wslc-compose==<span class="ver">0.6.0</span>"</code>
     <button onclick="navigator.clipboard.writeText('pipx install &quot;wslc-compose=='+document.querySelector('.ver').textContent+'&quot;').then(()=>{this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500)})">Copy</button>
   </div>
   <p class="tag" style="font-size:.95rem; margin-bottom:26px">
     <a href="https://github.com/bacarndiaye/wslc-compose/releases/latest"><img alt="Latest release" style="vertical-align:middle" src="https://img.shields.io/github/v/release/bacarndiaye/wslc-compose?label=latest%20release"></a>
     <a href="https://pypi.org/project/wslc-compose/"><img alt="PyPI version" style="vertical-align:middle" src="https://img.shields.io/pypi/v/wslc-compose.svg"></a>
     Available on <a href="https://pypi.org/project/wslc-compose/"><strong>PyPI</strong></a> —
-    also <code>uv tool install "wslc-compose==<span class="ver">0.5.1</span>"</code>.<br>
+    also <code>uv tool install "wslc-compose==<span class="ver">0.6.0</span>"</code>.<br>
     On Debian/Ubuntu (<code>externally-managed-environment</code>) or without pipx, use the
     <a href="https://github.com/bacarndiaye/wslc-compose#one-liner-no-pip-venv-or-pipx-on-your-distro">one-line installer</a>.
   </p>
@@ -290,27 +290,27 @@ my-project-web-1   web      nginx:alpine  running  <span class="hl">0.0.0.0:8080
 
 <section id="new">
   <div class="wrap">
-    <h2>New in <span id="new-version">0.5</span></h2>
-    <p class="sub">Start order that follows readiness, and the first wslc 3.0.5 options.
-      <strong>0.5.1:</strong> one service failing to start (e.g. a host port already in use) no longer stops <code>up</code> &mdash; the others still start and <code>up</code> exits 1 with a summary.</p>
+    <h2>New in <span id="new-version">0.6</span></h2>
+    <p class="sub">Closer to Docker Compose on every compose file, and a project that keeps going when one service fails.
+      Upgrading recreates nothing: the shared config hash is unchanged.</p>
     <div class="term">
-      <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span>depends_on: service_healthy · service_completed_successfully</span></div>
+      <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span>one taken port no longer stops the project</span></div>
       <pre><span class="p">$</span> wslc compose up -d
-<span class="o">Creating my-project-db-1 ...
-Creating my-project-migrate-1 ...
-<span class="hl">Waiting for db to be healthy ...</span>
-<span class="hl">Waiting for migrate to complete ...</span>
-Creating my-project-web-1 ...</span>   <span class="c"># web only starts once the database is ready</span></pre>
+<span class="o">Creating my-project-api-1 ...
+Creating my-project-web-1 ...
+<span class="hl">wslc-compose: Container my-project-web-1 failed to start: wslc run -d failed (exit 1)</span>
+Creating my-project-worker-1 ...
+<span class="hl">wslc-compose: 1 service failed to start: web</span></span>   <span class="c"># the others run; exit status 1</span></pre>
     </div>
     <div class="grid" style="margin-top:24px; grid-template-columns:repeat(auto-fit,minmax(215px,1fr))">
-      <div class="card"><div class="ico">⏳</div><h3>Waits for readiness</h3>
-        <p><code>condition: service_healthy</code> and <code>service_completed_successfully</code>. An unhealthy or crashed dependency skips only the services that need it; <code>--wait-timeout</code> bounds the wait.</p></div>
-      <div class="card"><div class="ico">🧩</div><h3>Optional dependencies</h3>
-        <p><code>required: false</code>: not started when its profile is off, and a failing check only warns instead of skipping the dependent service.</p></div>
-      <div class="card"><div class="ico">🔁</div><h3>Restart &amp; capabilities</h3>
-        <p><code>restart: always</code>, <code>cap_add</code> and <code>cap_drop</code> map to the new wslc 3.0.5 options — detected automatically, older wslc just warns.</p></div>
-      <div class="card"><div class="ico">✅</div><h3>Tested for real</h3>
-        <p>Validated on a live wslc session, including <code>host.docker.internal</code> routing; the test suite now runs on Linux and Windows.</p></div>
+      <div class="card"><div class="ico">🧬</div><h3>extends &amp; merge tags</h3>
+        <p><code>extends:</code> (same file or <code>file:</code>), <code>!reset</code> / <code>!override</code>, nested <code>${A:-${B}}</code>, YAML 1.2 booleans like Compose.</p></div>
+      <div class="card"><div class="ico">📄</div><h3>env files that just work</h3>
+        <p><code>export</code>, quotes, <code># comments</code>, <code>required: false</code>; editing an env file recreates the container.</p></div>
+      <div class="card"><div class="ico">🔌</div><h3>Ports &amp; mounts</h3>
+        <p><code>127.0.0.1::80</code>, IPv6 <code>[::1]:8080:80</code>, tmpfs <code>size</code>/<code>mode</code> translated to wslc's mount options.</p></div>
+      <div class="card"><div class="ico">✅</div><h3>100% tested</h3>
+        <p>Every line and branch covered on Linux and Windows, enforced in CI; each fix checked on a live wslc session.</p></div>
     </div>
   </div>
 </section>
