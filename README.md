@@ -233,6 +233,12 @@ Apply to every subcommand and go **before** it: `wslc-compose -f other.yml up -d
 Create networks and volumes, build missing images, then create/start containers in
 `depends_on` order. Idempotent: up-to-date running containers are left alone.
 
+If a container fails to start (a host port already in use, an image that will not run...),
+`up` reports it and carries on with the other services, like `docker compose` and
+`podman-compose`. Services that depend on the failed one (unless `required: false`) are
+skipped. At the end `up` prints which services failed, does not attach to logs, and exits
+with status 1; the containers that did start keep running.
+
 | Option | Description |
 |---|---|
 | `-d, --detach` | do not attach to logs after starting |
@@ -380,15 +386,15 @@ services:
 | `service_healthy` | its healthcheck reports `healthy` (all replicas) |
 | `service_completed_successfully` | it has exited with code 0 |
 
-`up` stops with an error as soon as a condition can never be met: the dependency is
-`unhealthy`, has exited, has **no healthcheck** (define one in the compose file or the image),
-or exited non-zero. Use `--wait-timeout SEC` to bound each wait. Dependencies that are not
+A service is skipped (and `up` ends with status 1) as soon as one of its conditions can never
+be met: the dependency is `unhealthy`, has exited, has **no healthcheck** (define one in the
+compose file or the image), or exited non-zero. Services that do not depend on it still start. Use `--wait-timeout SEC` to bound each wait. Dependencies that are not
 part of the `up` (other profiles, scaled to 0) are not waited on, and `--dry-run` only prints
 what it would wait for.
 
 With `required: false` a dependency is optional: it is not pulled in when it is not selected
 (profile off, or `up web` only), and when it *is* started but its condition fails (unhealthy,
-exited, timeout) `up` prints a warning and carries on instead of stopping.
+exited, timeout) `up` prints a warning and starts the dependent service anyway.
 
 ```yaml
 depends_on:

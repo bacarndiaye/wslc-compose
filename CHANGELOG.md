@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- `up` no longer stops at the first container that fails to start (e.g. a host port already
+  in use, #38): the other services still start, dependents of the failed service are skipped
+  (unless `required: false`), and `up` ends with a summary and exit status 1, like
+  `docker compose` and `podman-compose`.
+
 ## 0.5.0 — 2026-11-05
 
 ### Added
