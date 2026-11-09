@@ -16,9 +16,9 @@ import yaml
 
 from wslc_compose import (
     LABEL_CONFIG_HASH,
-    LABEL_LOCAL_CONFIG,
     LABEL_HOST_GATEWAY,
     LABEL_INDEX,
+    LABEL_LOCAL_CONFIG,
     LABEL_PROJECT,
     LABEL_SERVICE,
     __version__,
