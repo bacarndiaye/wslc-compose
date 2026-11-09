@@ -435,7 +435,7 @@ _MOUNT_OPTION_KEYS = {
 }
 
 
-def _mount_options(spec: dict, warnings: Optional[List[str]]) -> List[str]:
+def _mount_options(spec: dict, warnings: List[str]) -> List[str]:
     options = []
     for section in ("bind", "volume", "tmpfs"):
         for key, value in (spec.get(section) or {}).items():
@@ -443,9 +443,8 @@ def _mount_options(spec: dict, warnings: Optional[List[str]]) -> List[str]:
                 continue  # Compose-side behaviour, not a mount option
             flag = _MOUNT_OPTION_KEYS.get((section, key))
             if flag is None:
-                if warnings is not None:
-                    warnings.append(f"mount {spec.get('target')}: {section}.{key} is not "
-                                    "supported by wslc (ignoring it)")
+                warnings.append(f"mount {spec.get('target')}: {section}.{key} is not "
+                                "supported by wslc (ignoring it)")
                 continue
             if isinstance(value, str) and value.strip().lower() in ("yes", "on", "no", "off"):
                 value = value.strip().lower() in ("yes", "on")  # YAML 1.1 spellings
@@ -465,7 +464,7 @@ def parse_volume(spec, project_dir: str, warnings: Optional[List[str]] = None) -
         read_only = _as_bool(spec.get("read_only", False), "volumes.read_only")
         if vtype == "bind" and source:
             source = _resolve_bind_source(source, project_dir)
-        options = _mount_options(spec, warnings)
+        options = _mount_options(spec, [] if warnings is None else warnings)
         return VolumeMount(vtype, source, target, read_only, options, True)
 
     parts = _split_volume_spec(str(spec))

@@ -26,20 +26,26 @@ class WslcError(RuntimeError):
     pass
 
 
+def _ancestors(path: str):
+    """`path`, then each parent directory up to the root."""
+    while True:
+        yield path
+        parent = os.path.dirname(path)
+        if parent == path:
+            return
+        path = parent
+
+
 def _is_self(path: str) -> bool:
-    """True when `path` is our own `wslc` wrapper script, not the real CLI."""
+    """True when `path` is our own `wslc` wrapper script, not the real CLI.
+
+    An ancestor counts too: pip's Windows launcher runs `...\\Scripts\\wslc.exe\\__main__.py`.
+    """
     try:
         candidate = os.path.realpath(path)
-        for value in (sys.argv[0], sys.executable):
-            current = os.path.realpath(value)
-            while True:
-                if candidate == current:
-                    return True
-                parent = os.path.dirname(current)
-                if parent == current:
-                    break
-                current = parent
-        return False
+        return any(candidate == ancestor
+                   for value in (sys.argv[0], sys.executable)
+                   for ancestor in _ancestors(os.path.realpath(value)))
     except OSError:
         return False
 
