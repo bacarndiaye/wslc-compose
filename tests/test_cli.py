@@ -221,7 +221,7 @@ def test_up_rejects_static_ip_scaling_before_engine_access(monkeypatch):
 
 
 @pytest.mark.parametrize("requested, actual", [(None, "10.0.0.2"), ("10.0.0.51", "10.0.0.2")])
-def test_up_fails_when_engine_ignores_static_ip(monkeypatch, requested, actual):
+def test_up_fails_when_engine_ignores_static_ip(monkeypatch, capsys, requested, actual):
     service = Service(name="web", image="fixture", networks=["front"],
                       network_ipv4_addresses={"front": "10.0.0.51"})
     project = Project(name="demo", directory=".", services={"web": service})
@@ -231,8 +231,8 @@ def test_up_fails_when_engine_ignores_static_ip(monkeypatch, requested, actual):
     monkeypatch.setattr(cli.engine, "inspect", lambda _: {
         "State": {"Running": True}, "NetworkSettings": {"Networks": {"front": {
             "IPAddress": actual, "IPAMConfig": {"IPv4Address": requested}}}}})
-    with pytest.raises(WslcError, match="did not apply"):
-        cli.cmd_up(cli.build_parser().parse_args(["up", "-d"]))
+    assert cli.cmd_up(cli.build_parser().parse_args(["up", "-d"])) == 1
+    assert "did not apply" in capsys.readouterr().err
 
 
 def test_ps_matches_docker_compose_column_order(monkeypatch, capsys):
@@ -355,3 +355,79 @@ def test_plain_service_matches_container_without_runtime_fields(monkeypatch):
     _opts(monkeypatch, "--restart", "--cap-add", "--cap-drop")
     assert cli._runtime_matches(Service(name="web", image="x"), {"restart_policy": "no", "cap_add": [], "cap_drop": []})
     assert cli._runtime_matches(Service(name="web", image="x"), {})
+
+
+def _up_failure_fixture(monkeypatch, project, failing):
+    """Fake engine where `wslc run` fails for the containers named in `failing`."""
+    runs = []
+
+    def fake_run(args, **_):
+        if args[0] == "run":
+            name = args[args.index("--name") + 1]
+            if name in failing:
+                raise WslcError("wslc run -d failed (exit 1)")
+            runs.append(name)
+
+    monkeypatch.setattr(cli, "_load", lambda _: project)
+    monkeypatch.setattr(cli, "_project_containers", lambda *_, **__: [])
+    monkeypatch.setattr(cli.engine, "run", fake_run)
+    monkeypatch.setattr(cli.host_gateway, "reconcile", lambda *a, **k: None)
+    monkeypatch.setattr(cli.networking, "verify_container", lambda *a, **k: None)
+    return runs
+
+
+def test_up_keeps_starting_other_services_when_one_fails(monkeypatch, capsys):
+    # issue #38: a host port already taken must not stop unrelated services
+    services = {name: Service(name=name, image="fixture") for name in ("a", "b", "c")}
+    project = Project(name="demo", directory=".", services=services)
+    runs = _up_failure_fixture(monkeypatch, project, failing={"demo-b-1"})
+
+    assert cli.cmd_up(cli.build_parser().parse_args(["up", "-d"])) == 1
+    assert runs == ["demo-a-1", "demo-c-1"]
+    err = capsys.readouterr().err
+    assert "Container demo-b-1 failed to start" in err
+    assert "1 service failed to start: b (" in err
+
+
+def test_up_skips_dependents_of_a_failed_service(monkeypatch, capsys):
+    db = Service(name="db", image="fixture")
+    web = Service(name="web", image="fixture", depends_on=["db"])
+    worker = Service(name="worker", image="fixture", depends_on=["db"],
+                     depends_on_optional=["db"])
+    other = Service(name="other", image="fixture")
+    project = Project(name="demo", directory=".",
+                      services={"db": db, "web": web, "worker": worker, "other": other})
+    runs = _up_failure_fixture(monkeypatch, project, failing={"demo-db-1"})
+
+    assert cli.cmd_up(cli.build_parser().parse_args(["up", "-d"])) == 1
+    assert sorted(runs) == ["demo-other-1", "demo-worker-1"]  # required: false still starts
+    err = capsys.readouterr().err
+    assert "Skipping web: dependency 'db' failed to start" in err
+    assert "2 services failed to start" in err
+
+
+def test_up_skips_service_whose_dependency_condition_fails(monkeypatch, capsys):
+    db = Service(name="db", image="fixture")
+    web = Service(name="web", image="fixture", depends_on=["db"],
+                  depends_on_conditions={"db": "service_healthy"})
+    other = Service(name="other", image="fixture")
+    project = Project(name="demo", directory=".", services={"db": db, "web": web, "other": other})
+    runs = _up_failure_fixture(monkeypatch, project, failing=set())
+
+    def unhealthy(proj, svc, selected, **kw):
+        raise WslcError("dependency 'db' is unhealthy (container demo-db-1)")
+
+    monkeypatch.setattr(cli.dependencies, "wait_for_dependencies", unhealthy)
+
+    assert cli.cmd_up(cli.build_parser().parse_args(["up", "-d"])) == 1
+    assert sorted(runs) == ["demo-db-1", "demo-other-1"]
+    assert "Skipping web: dependency 'db' is unhealthy" in capsys.readouterr().err
+
+
+def test_up_does_not_attach_logs_after_a_failure(monkeypatch):
+    services = {name: Service(name=name, image="fixture") for name in ("a", "b")}
+    project = Project(name="demo", directory=".", services=services)
+    _up_failure_fixture(monkeypatch, project, failing={"demo-a-1"})
+    monkeypatch.setattr(cli, "_follow_logs", lambda *a, **k: pytest.fail("must not attach"))
+
+    assert cli.cmd_up(cli.build_parser().parse_args(["up"])) == 1

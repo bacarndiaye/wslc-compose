@@ -331,6 +331,11 @@ def cmd_up(ns: argparse.Namespace) -> int:
     existing = {c["name"]: c for c in _project_containers(project, all_states=True)} if not ns.dry_run else {}
     gateway_known = any(current.get("host_gateway") for current in existing.values())
     started: List[str] = []
+    # Like docker compose and podman-compose, one service failing to start
+    # (a host port already taken, an unhealthy dependency...) does not stop
+    # the others: its dependents are skipped, every other service still
+    # starts, and `up` exits non-zero with a summary at the end.
+    failed: Dict[str, str] = {}
 
     for svc in services:
         replicas = scale.get(svc.name, svc.replicas)
@@ -338,57 +343,73 @@ def cmd_up(ns: argparse.Namespace) -> int:
             raise ComposeError(
                 f"{svc.name}: cannot scale a service with container_name set"
             )
+        blocked_by = [dep for dep in svc.depends_on
+                      if dep in failed and dep not in svc.depends_on_optional]
+        if blocked_by and replicas > 0:
+            failed[svc.name] = f"dependency {blocked_by[0]!r} failed to start"
+            _err(f"Skipping {svc.name}: {failed[svc.name]}")
+            continue
         desired_hash = svc.config_hash(project)
         if svc.depends_on_conditions and replicas > 0:
             if ns.dry_run:
                 for dep, condition in svc.depends_on_conditions.items():
                     _info(f"(dry run) would wait for {dep}: {condition}")
             else:
-                dependencies.wait_for_dependencies(
-                    project, svc, services, timeout=getattr(ns, "wait_timeout", 0) or 0,
-                    log=_info,
-                    replicas={s.name: scale.get(s.name, s.replicas) for s in services},
-                )
+                try:
+                    dependencies.wait_for_dependencies(
+                        project, svc, services, timeout=getattr(ns, "wait_timeout", 0) or 0,
+                        log=_info,
+                        replicas={s.name: scale.get(s.name, s.replicas) for s in services},
+                    )
+                except WslcError as exc:
+                    failed[svc.name] = str(exc)
+                    _err(f"Skipping {svc.name}: {exc}")
+                    continue
         for index in range(1, replicas + 1):
             host_gateway.reconcile(project, ns.dry_run, previously_enabled=gateway_known)
             cname = project.container_name(svc, index)
             current = existing.pop(cname, None)
-            if current is not None:
-                fresh = (current["hash"] == desired_hash and not ns.force_recreate
-                         and not (current.get("host_gateway") and not any(
-                             entry.partition(":")[2].strip().lower() == "host-gateway" for entry in svc.extra_hosts))
-                         and networking.configuration_matches(svc, current)
-                         and _runtime_matches(svc, current))
-                if fresh and current["running"]:
-                    _info(f"Container {cname} is up-to-date")
-                    continue
-                if fresh and not current["running"]:
-                    _info(f"Starting {cname} ...")
-                    engine.run_retried(["start", cname], dry_run=ns.dry_run)
-                    networking.verify_container(svc, cname, ns.dry_run)
-                    _apply_extra_hosts(cname, svc.extra_hosts, ns.dry_run)
-                    started.append(cname)
-                    continue
-                _info(f"Recreating {cname} ...")
-                if current["running"]:
+            try:
+                if current is not None:
+                    fresh = (current["hash"] == desired_hash and not ns.force_recreate
+                             and not (current.get("host_gateway") and not any(
+                                 entry.partition(":")[2].strip().lower() == "host-gateway"
+                                 for entry in svc.extra_hosts))
+                             and networking.configuration_matches(svc, current)
+                             and _runtime_matches(svc, current))
+                    if fresh and current["running"]:
+                        _info(f"Container {cname} is up-to-date")
+                        continue
+                    if fresh and not current["running"]:
+                        _info(f"Starting {cname} ...")
+                        engine.run_retried(["start", cname], dry_run=ns.dry_run)
+                        networking.verify_container(svc, cname, ns.dry_run)
+                        _apply_extra_hosts(cname, svc.extra_hosts, ns.dry_run)
+                        started.append(cname)
+                        continue
+                    _info(f"Recreating {cname} ...")
+                    if current["running"]:
+                        engine.run(
+                            ["stop", "-t", str(ns.timeout), cname], capture=True, dry_run=ns.dry_run
+                        )
+                    engine.run(["remove", "-f", cname], capture=True, dry_run=ns.dry_run)
+                else:
+                    _info(f"Creating {cname} ...")
+                if len(svc.networks) > 1 and not svc.network_mode:
+                    networking.create_and_start(project, svc, index, ns.dry_run)
+                else:
                     engine.run(
-                        ["stop", "-t", str(ns.timeout), cname], capture=True, dry_run=ns.dry_run
+                        flags.run_args(
+                            project, svc, index, detach=True, path_mapper=engine.to_host_path
+                        ),
+                        dry_run=ns.dry_run,
                     )
-                engine.run(["remove", "-f", cname], capture=True, dry_run=ns.dry_run)
-            else:
-                _info(f"Creating {cname} ...")
-            if len(svc.networks) > 1 and not svc.network_mode:
-                networking.create_and_start(project, svc, index, ns.dry_run)
-            else:
-                engine.run(
-                    flags.run_args(
-                        project, svc, index, detach=True, path_mapper=engine.to_host_path
-                    ),
-                    dry_run=ns.dry_run,
-                )
-                networking.verify_container(svc, cname, ns.dry_run)
-            _apply_extra_hosts(cname, svc.extra_hosts, ns.dry_run)
-            started.append(cname)
+                    networking.verify_container(svc, cname, ns.dry_run)
+                _apply_extra_hosts(cname, svc.extra_hosts, ns.dry_run)
+                started.append(cname)
+            except WslcError as exc:
+                failed.setdefault(svc.name, str(exc))
+                _err(f"Container {cname} failed to start: {exc}")
 
         # drop replicas beyond the requested scale
         for name, leftover in list(existing.items()):
@@ -398,6 +419,11 @@ def cmd_up(ns: argparse.Namespace) -> int:
                 existing.pop(name)
 
     host_gateway.reconcile(project, ns.dry_run, previously_enabled=gateway_known)
+    if failed:
+        noun = "service" if len(failed) == 1 else "services"
+        _err(f"{len(failed)} {noun} failed to start: "
+             + "; ".join(f"{name} ({reason})" for name, reason in failed.items()))
+        return 1
     if ns.detach or ns.dry_run or not started:
         return 0
     _info("Attaching to logs (Ctrl+C to detach; containers keep running)")
