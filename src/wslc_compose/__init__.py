@@ -1,6 +1,6 @@
 """docker-compose style orchestration for WSL containers (wslc)."""
 
-__version__ = "0.5.0"
+__version__ = "0.5.1"
 
 LABEL_PROJECT = "com.wslc-compose.project"
 LABEL_SERVICE = "com.wslc-compose.service"

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.1 — 2026-11-09
 
 ### Changed
 - `up` no longer stops at the first container that fails to start (e.g. a host port already
