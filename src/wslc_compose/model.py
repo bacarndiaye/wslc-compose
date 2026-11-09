@@ -8,6 +8,40 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 
+def _file_digest(path: str) -> str:
+    """sha256 of a file's content, or of its path when this process cannot read it.
+
+    A Windows path (`C:/Users/...`) is handed to wslc.exe as-is but is not readable from
+    WSL; hashing the path keeps `up` working and still detects a change of file.
+    """
+    try:
+        with open(path, "rb") as handle:
+            return hashlib.sha256(handle.read()).hexdigest()
+    except OSError:
+        return hashlib.sha256(("path:" + path).encode()).hexdigest()
+
+
+def local_config_digest(service: "Service") -> str:
+    """Identity of the settings that the shared v2 hash does not cover.
+
+    Only non-default settings are recorded, so a setting added here later never changes
+    the digest of services that do not use it.
+    """
+    payload: Dict[str, object] = {}
+    if service.env_files:
+        payload["env_files"] = [[path, _file_digest(path)] for path in service.env_files]
+    options = sorted(f"{mount.type}:{mount.target}:{','.join(mount.options)}"
+                     for mount in service.volumes if mount.options)
+    if options:
+        payload["mount_options"] = options
+    if service.entrypoint == []:
+        payload["entrypoint_reset"] = True
+    if service.command == []:
+        payload["command_reset"] = True
+    blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return "v1:" + hashlib.sha256(blob.encode()).hexdigest()[:32]
+
+
 @dataclass
 class BuildConfig:
     context: str
@@ -196,9 +230,8 @@ class Service:
             result = []
             for mount in sorted(mounts, key=lambda item: (item.target, item.source)):
                 resource = resources[mount.source]
-                with open(resource.file, "rb") as handle:
-                    result.append({"source": mount.source, "target": mount.target,
-                                   "sha256": hashlib.sha256(handle.read()).hexdigest()})
+                result.append({"source": mount.source, "target": mount.target,
+                               "sha256": _file_digest(resource.file)})
             return result
         payload["secrets"] = file_mounts(self.secrets, project.secrets) if project else []
         payload["configs"] = file_mounts(self.configs, project.configs) if project else []

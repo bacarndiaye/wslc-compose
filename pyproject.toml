@@ -42,3 +42,13 @@ select = ["E4", "E7", "E9", "F", "I"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["wslc_compose"]
+
+[tool.coverage.report]
+# Every line and branch is tested (Linux and Windows); CI fails below 100%.
+fail_under = 100
+show_missing = true
+skip_covered = true

@@ -321,3 +321,138 @@ def test_restart_and_capabilities_do_not_change_the_shared_hash():
     _, rich = _service_with_runtime_options()
     rich.name, rich.image = "web", "x"
     assert plain.config_hash() == rich.config_hash()
+
+
+def test_healthcheck_cmd_form_keeps_argument_boundaries(tmp_path):
+    # #45
+    project = make_project(tmp_path)
+    service = project.services["web"]
+    service.healthcheck = HealthCheck(test=["CMD", "sh", "-c", "wget -q -O- http://localhost/ || exit 1"])
+    args = run_args(project, service)
+    assert args[args.index("--health-cmd") + 1] == "sh -c 'wget -q -O- http://localhost/ || exit 1'"
+    service.healthcheck = HealthCheck(test=["CMD", "pg_isready", "-U", "postgres"])
+    args = run_args(project, service)
+    assert args[args.index("--health-cmd") + 1] == "pg_isready -U postgres"  # unchanged for simple args
+
+
+def test_secret_with_unreadable_windows_path_does_not_break_the_hash(tmp_path):
+    # #41: the README example `file: C:/Users/me/...` under WSL
+    from wslc_compose.model import FileMount, FileResource
+    project = make_project(tmp_path)
+    service = project.services["web"]
+    project.secrets = {"nuget": FileResource("nuget", "C:/Users/me/.nuget/private.NuGet.Config")}
+    service.secrets = [FileMount("nuget", "/run/secrets/nuget")]
+    first = service.config_hash(project)
+    assert first == service.config_hash(project)
+    project.secrets["nuget"].file = "C:/Users/me/other.config"
+    assert service.config_hash(project) != first
+
+
+def test_env_files_label_tracks_paths_and_contents(tmp_path):
+    # #46: outside the shared v2 hash, so upgrading does not change any config-hash
+    from wslc_compose import LABEL_LOCAL_CONFIG
+    from wslc_compose.metadata import container_labels
+    project = make_project(tmp_path)
+    service = project.services["web"]
+    env_file = tmp_path / "app.env"
+    env_file.write_text("A=1\n")
+    no_files = container_labels(project, service, 1)[LABEL_LOCAL_CONFIG]
+    original_hash = service.config_hash(project)
+    service.env_files = [str(env_file)]
+    with_file = container_labels(project, service, 1)[LABEL_LOCAL_CONFIG]
+    env_file.write_text("A=2\n")
+    changed = container_labels(project, service, 1)[LABEL_LOCAL_CONFIG]
+    assert len({no_files, with_file, changed}) == 3
+    assert service.config_hash(project) == original_hash
+
+
+def test_entrypoint_reset_and_command_reset(tmp_path, monkeypatch):
+    project = make_project(tmp_path)
+    service = project.services["web"]
+    image = image_name(project, service)
+    service.entrypoint, service.command = [], ["echo", "hi"]
+    args = run_args(project, service)
+    assert args[args.index("--entrypoint") + 1] == ""
+    assert args[args.index(image) + 1:] == ["echo", "hi"]
+
+    # command: [] keeps the image ENTRYPOINT but drops its CMD
+    monkeypatch.setattr(engine, "image_entrypoint", lambda name: ["/docker-entrypoint.sh", "-x"])
+    service.entrypoint, service.command = None, []
+    args = run_args(project, service)
+    assert args[args.index("--entrypoint") + 1] == "/docker-entrypoint.sh"
+    assert args[args.index(image) + 1:] == ["-x"]
+    monkeypatch.setattr(engine, "image_entrypoint", lambda name: [])
+    args = run_args(project, service)
+    assert args[args.index("--entrypoint") + 1] == ""
+    monkeypatch.setattr(engine, "image_entrypoint", lambda name: None)  # image not local
+    assert "--entrypoint" not in run_args(project, service)
+
+
+def test_healthcheck_options_without_test_tune_the_image_healthcheck(tmp_path):
+    project = make_project(tmp_path)
+    service = project.services["web"]
+    service.healthcheck = HealthCheck(interval="5s", retries=2)
+    args = run_args(project, service)
+    assert "--health-cmd" not in args
+    assert args[args.index("--health-interval") + 1] == "5s"
+    assert args[args.index("--health-retries") + 1] == "2"
+
+
+def test_local_config_digest_records_only_non_default_settings(tmp_path):
+    from wslc_compose.model import Service, VolumeMount, local_config_digest
+    plain = local_config_digest(Service(name="a", image="x"))
+    assert plain == local_config_digest(Service(name="b", image="y"))
+    with_options = Service(name="a", image="x", volumes=[
+        VolumeMount("tmpfs", None, "/t", options=["tmpfs-size=1000"], structured=True)])
+    bigger = Service(name="a", image="x", volumes=[
+        VolumeMount("tmpfs", None, "/t", options=["tmpfs-size=2000"], structured=True)])
+    digests = {plain, local_config_digest(with_options), local_config_digest(bigger),
+               local_config_digest(Service(name="a", image="x", entrypoint=[])),
+               local_config_digest(Service(name="a", image="x", command=[]))}
+    assert len(digests) == 5
+
+
+def test_env_file_passed_as_is_when_already_plain(tmp_path):
+    from wslc_compose.flags import wslc_env_file
+    plain = tmp_path / "plain.env"
+    plain.write_text("# comment\nA=1\n\nB=two words\nPASSTHROUGH\n")
+    assert wslc_env_file(str(plain)) == str(plain)
+    assert wslc_env_file(str(tmp_path / "missing.env")) == str(tmp_path / "missing.env")
+
+
+def test_env_file_compose_syntax_is_normalized_for_wslc(tmp_path, monkeypatch):
+    # wslc rejects `export KEY=...` and keeps quotes / inline comments in values
+    import os
+
+    from wslc_compose import flags
+    monkeypatch.setattr(flags, "_ENV_DIR", [])
+    registered = []
+    monkeypatch.setattr(flags.atexit, "register", lambda *a: registered.append(a))
+    monkeypatch.setenv("WHO", "bob")
+    fancy = tmp_path / "fancy.env"
+    fancy.write_text("export E=exported\nQ=\"quoted\"\nC=val # comment\nS='single $x'\nH=${WHO}\nBARE\n")
+    copy = flags.wslc_env_file(str(fancy))
+    assert copy != str(fancy) and os.path.dirname(copy) == flags._ENV_DIR[0]
+    with open(copy, encoding="utf-8") as handle:
+        assert handle.read() == "E=exported\nQ=quoted\nC=val\nS=single $x\nH=bob\nBARE\n"
+    assert registered and registered[0][1] == flags._ENV_DIR[0]  # removed at exit
+    assert flags.wslc_env_file(str(fancy)) == copy  # same private directory is reused
+    assert len(registered) == 1
+
+
+def test_env_file_interpolation_error_is_a_wslc_error(tmp_path):
+    from wslc_compose.flags import wslc_env_file
+    bad = tmp_path / "bad.env"
+    bad.write_text("A=${NOPE_ENV_X:?must be set}\n")
+    with pytest.raises(engine.WslcError, match="must be set"):
+        wslc_env_file(str(bad))
+
+
+def test_run_args_pass_the_normalized_env_file(tmp_path, monkeypatch):
+    from wslc_compose import flags
+    project = make_project(tmp_path)
+    service = project.services["web"]
+    service.env_files = [str(tmp_path / "x.env")]
+    monkeypatch.setattr(flags, "wslc_env_file", lambda path: path + ".normalized")
+    args = run_args(project, service)
+    assert args[args.index("--env-file") + 1] == str(tmp_path / "x.env") + ".normalized"

@@ -1,5 +1,49 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- `extends:` (same file or `file:`), and the `!reset` / `!override` merge tags, on values,
+  services or whole sections (#54).
+- Ports `ip::container` (random host port on one address), IPv6 `[::1]:host:container`, and
+  long syntax `host_ip` without `published` (#48).
+- `env_file` long syntax `{path, required: false}`; Windows and `~` env-file paths (#46).
+- `entrypoint: []` / `command: []` clear the image's value; healthcheck options without
+  `test` tune the image's healthcheck.
+- `.env` and env files: inline comments, `export`, quotes, `${VAR}` references (#47). Env
+  files using that syntax reach wslc as a normalized private copy (wslc reads lines
+  literally and rejects `export`).
+- Long-syntax mount options are translated to wslc's keys (`tmpfs-size`, `tmpfs-mode`,
+  `bind-recursive`); unsupported ones are dropped with a warning instead of failing the
+  container (#55).
+- 100% line and branch coverage, enforced in CI on Linux and Windows.
+
+### Fixed
+- No more tracebacks: circular `depends_on`, a wrong `WSLC_COMPOSE_BIN`, invalid YAML,
+  `${VAR:?message}`, a Windows-path secret under WSL, `start`/`restart` with a container of a
+  removed service now give a one-line error or just work (#41).
+- Booleans: interpolated `"false"` is false; YAML is read as 1.2 like Docker Compose (only
+  `true`/`false` are booleans, `DEBUG: true` → `true`, `OFF:` stays a key, unquoted `22:22`
+  is not the number 1342) (#42).
+- `include`: relative paths without `./` resolve against the included file; `.\data` is a
+  bind mount (#43).
+- `deploy.replicas: 0` starts nothing; `--scale` is validated before anything is created and
+  rejects unknown services (#44).
+- Healthcheck `CMD` form keeps argument quoting (#45).
+- Editing an env file recreates the container, via a new `local-config-hash` label kept
+  outside the shared `config-hash`; containers made by older versions are not recreated (#46).
+- Nested defaults `${A:-${B}}` are expanded; each `-f` file is interpolated before the
+  overlay, so volumes merge on their resolved container path (#47).
+- `environment: [FOO]` takes `FOO` from the shell / `.env` (wslc.exe cannot see the WSL
+  environment) (#49).
+- `logs` shows stopped/crashed containers and reports failures in its exit status (#50).
+- `up` no longer waits for an optional dependency that failed to start (#51).
+- `exec -T` keeps stdin attached, so piped input works (#52).
+- Image presence check handles registry ports and untagged names (`latest`) (#53).
+- `ps` CREATED column follows Docker's wording ("About an hour ago", "30 hours ago",
+  "2 weeks ago"; no more "1 minutes ago"); `ps -q` prints the name when wslc gives no ID.
+- README: the wslc lookup order matches the code (#54).
+
 ## 0.5.1 — 2026-11-09
 
 ### Changed
