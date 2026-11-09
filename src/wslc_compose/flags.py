@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import atexit
+import hashlib
 import os
 import shlex
+import shutil
+import tempfile
 from typing import Callable, List, Optional
 
 from wslc_compose import LABEL_CREATE_OPERATION, LABEL_HOST_GATEWAY, engine
+from wslc_compose.interpolation import InterpolationError
+from wslc_compose.loader import read_dotenv_lines
 from wslc_compose.metadata import container_labels
 from wslc_compose.model import Project, Service
 
@@ -38,7 +44,7 @@ def run_args(
         args += ["-l", f"{LABEL_HOST_GATEWAY}=v1"]
 
     for env_file in service.env_files:
-        args += ["--env-file", mapper(env_file)]
+        args += ["--env-file", mapper(wslc_env_file(env_file))]
     for key, value in service.environment.items():
         args += ["-e", key if value is None else f"{key}={value}"]
 
@@ -168,6 +174,43 @@ def run_args(
     args += (entrypoint or [])[1:]
     args += service.command or []
     return args
+
+
+_ENV_DIR: List[str] = []
+
+
+def _private_env_dir() -> str:
+    if not _ENV_DIR:
+        directory = tempfile.mkdtemp(prefix="wslc-compose-env-")  # mode 0700
+        atexit.register(shutil.rmtree, directory, True)
+        _ENV_DIR.append(directory)
+    return _ENV_DIR[0]
+
+
+def wslc_env_file(path: str) -> str:
+    """The env file to hand to `wslc --env-file`.
+
+    wslc reads each line literally: `export KEY=...` is rejected and quotes or inline
+    comments end up in the value. Compose reads env files like `.env`, so when a file
+    uses that syntax a normalized copy (in a private temporary directory removed at
+    exit) is passed instead; a file that is already plain `KEY=VALUE` is passed as is.
+    """
+    try:
+        with open(path, encoding="utf-8") as handle:
+            raw = [line.strip() for line in handle]
+        entries = read_dotenv_lines(path)
+    except OSError:
+        return path  # e.g. a Windows path that only wslc.exe can read
+    except InterpolationError as exc:
+        raise engine.WslcError(f"env_file {path}: {exc}") from None
+    lines = [key if value is None else f"{key}={value}" for key, value in entries]
+    if lines == [line for line in raw if line and not line.startswith("#")]:
+        return path
+    digest = hashlib.sha256(path.encode()).hexdigest()[:12]
+    copy = os.path.join(_private_env_dir(), f"{digest}-{os.path.basename(path)}")
+    with open(copy, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write("".join(line + "\n" for line in lines))
+    return copy
 
 
 def network_connect_args(service: Service, network: str, container: str) -> List[str]:

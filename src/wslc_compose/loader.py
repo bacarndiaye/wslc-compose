@@ -115,6 +115,20 @@ _ComposeYamlLoader.add_constructor(
     "!override", lambda loader, node: _Override(_construct_tagged(loader, node)))
 
 
+def _interpolated(node, env):
+    """`interpolate_tree` that also reaches inside `!override` values."""
+    try:
+        if isinstance(node, _Override):
+            return _Override(_interpolated(node.value, env))
+        if isinstance(node, dict):
+            return {k: _interpolated(v, env) for k, v in node.items()}
+        if isinstance(node, list):
+            return [_interpolated(v, env) for v in node]
+        return interpolate_tree(node, env)
+    except InterpolationError as exc:
+        raise ComposeError(str(exc)) from None
+
+
 def _strip_merge_tags(node):
     """Apply the `!reset` / `!override` tags left after merging (or in a single file)."""
     if isinstance(node, _Override):
@@ -174,14 +188,27 @@ def find_compose_file(directory: str) -> Optional[str]:
 def load_dotenv(path: str, environ: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     """Read a .env file. `${VAR}` references in unquoted and double-quoted values are
     expanded from the variables defined above them and the process environment."""
+    if not os.path.isfile(path):
+        return {}
+    return {key: value for key, value in read_dotenv_lines(path, environ) if value is not None}
+
+
+def read_dotenv_lines(path: str, environ: Optional[Dict[str, str]] = None):
+    """(key, value) for every variable line of a .env-style file, in order.
+
+    `value` is None for a bare `KEY` line (no `=`), which env files use to pass a
+    variable through from the environment.
+    """
     environ = dict(os.environ) if environ is None else environ
     env: Dict[str, str] = {}
-    if not os.path.isfile(path):
-        return env
+    entries = []
     with open(path, encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                entries.append((line, None))
                 continue
             key, _, value = line.partition("=")
             key = key.strip()
@@ -192,7 +219,8 @@ def load_dotenv(path: str, environ: Optional[Dict[str, str]] = None) -> Dict[str
             if not raw_value.startswith("'"):
                 parsed = interpolate(parsed, {**env, **environ}, dotenv=True)
             env[key] = parsed
-    return env
+            entries.append((key, parsed))
+    return entries
 
 
 def _dotenv_value(value: str) -> str:
@@ -394,7 +422,40 @@ def _is_host_path(source: str) -> bool:
     )
 
 
-def parse_volume(spec, project_dir: str) -> VolumeMount:
+# Compose long-syntax mount options -> `wslc run --mount` keys (verified on wslc 3.0.5).
+# None: accepted by Compose but not supported by wslc (dropped with a warning).
+_MOUNT_OPTION_KEYS = {
+    ("tmpfs", "size"): "tmpfs-size",
+    ("tmpfs", "mode"): "tmpfs-mode",
+    ("bind", "recursive"): "bind-recursive",
+    ("bind", "propagation"): None,
+    ("bind", "selinux"): None,
+    ("volume", "nocopy"): None,
+    ("volume", "subpath"): None,
+}
+
+
+def _mount_options(spec: dict, warnings: Optional[List[str]]) -> List[str]:
+    options = []
+    for section in ("bind", "volume", "tmpfs"):
+        for key, value in (spec.get(section) or {}).items():
+            if (section, key) == ("bind", "create_host_path"):
+                continue  # Compose-side behaviour, not a mount option
+            flag = _MOUNT_OPTION_KEYS.get((section, key))
+            if flag is None:
+                if warnings is not None:
+                    warnings.append(f"mount {spec.get('target')}: {section}.{key} is not "
+                                    "supported by wslc (ignoring it)")
+                continue
+            if isinstance(value, str) and value.strip().lower() in ("yes", "on", "no", "off"):
+                value = value.strip().lower() in ("yes", "on")  # YAML 1.1 spellings
+            if isinstance(value, bool):
+                value = str(value).lower()
+            options.append(f"{flag}={value}")
+    return options
+
+
+def parse_volume(spec, project_dir: str, warnings: Optional[List[str]] = None) -> VolumeMount:
     if isinstance(spec, dict):  # long syntax
         vtype = spec.get("type", "volume")
         source = spec.get("source")
@@ -404,14 +465,7 @@ def parse_volume(spec, project_dir: str) -> VolumeMount:
         read_only = _as_bool(spec.get("read_only", False), "volumes.read_only")
         if vtype == "bind" and source:
             source = _resolve_bind_source(source, project_dir)
-        options = []
-        for section in ("bind", "volume", "tmpfs"):
-            for key, value in (spec.get(section) or {}).items():
-                if isinstance(value, str) and value.strip().lower() in ("yes", "on", "no", "off"):
-                    value = value.strip().lower() in ("yes", "on")  # YAML 1.1 spellings
-                if isinstance(value, bool):
-                    value = str(value).lower()
-                options.append(f"{key}={value}")
+        options = _mount_options(spec, warnings)
         return VolumeMount(vtype, source, target, read_only, options, True)
 
     parts = _split_volume_spec(str(spec))
@@ -587,7 +641,7 @@ def _rebase_service_paths(services: dict, base_dir: str) -> None:
             cfg["volumes"] = rebased
 
 
-def _resolve_extends(services: dict, main_file: str) -> None:
+def _resolve_extends(services: dict, main_file: str, env: Dict[str, str]) -> None:
     """Expand `extends:` in place: the base service's settings, overlaid by the local ones.
 
     `extends: name`, `{service: name}` or `{service: name, file: other.yaml}` (relative
@@ -597,7 +651,7 @@ def _resolve_extends(services: dict, main_file: str) -> None:
     cache: Dict[Tuple[str, str], dict] = {}
 
     def load(path: str) -> dict:
-        raw = _strip_merge_tags(_read_compose(path))
+        raw = _strip_merge_tags(_interpolated(_read_compose(path), env))
         found = raw.get("services") or {}
         if os.path.dirname(path) != base_dir:
             _rebase_service_paths(found, os.path.dirname(path))
@@ -764,7 +818,11 @@ def merge_compose(base: dict, override: dict) -> dict:
     """Overlay `override` on `base` like `docker compose -f a.yml -f b.yml`."""
     result = dict(base)
     for key, value in override.items():
-        if key in ("services", "networks", "volumes", "secrets", "configs") and key in result:
+        if isinstance(value, _Reset):
+            result.pop(key, None)
+        elif isinstance(value, _Override):
+            result[key] = value.value
+        elif key in ("services", "networks", "volumes", "secrets", "configs") and key in result:
             merged = dict(result[key] or {})
             for name, cfg in (value or {}).items():
                 if isinstance(cfg, _Reset):
@@ -939,18 +997,16 @@ def load_project(
         raise ComposeError(f"{dotenv_path}: {exc}") from None
     env.update(os.environ)  # process env wins
 
-    raw = _read_compose(compose_files[0])
+    # Each file is interpolated before the overlay, as Docker Compose does, so merge
+    # keys (a volume's container path...) are compared on their resolved values.
+    raw = _interpolated(_read_compose(compose_files[0]), env)
     for extra in compose_files[1:]:
-        raw = merge_compose(raw, _read_compose(extra))
+        raw = merge_compose(raw, _interpolated(_read_compose(extra), env))
     raw = _strip_merge_tags(raw)
     if not raw.get("services"):
         where = compose_file if len(compose_files) == 1 else ", ".join(compose_files)
         raise ComposeError(f"{where}: no 'services' section found")
-    _resolve_extends(raw["services"], compose_file)
-    try:
-        raw = interpolate_tree(raw, env)
-    except InterpolationError as exc:
-        raise ComposeError(str(exc)) from None
+    _resolve_extends(raw["services"], compose_file, env)
 
     name = normalize_project_name(
         project_name
@@ -1014,7 +1070,9 @@ def load_project(
         for spec in cfg.get("ports") or []:
             svc.ports.extend(parse_port(spec))
         for spec in cfg.get("volumes") or []:
-            svc.volumes.append(parse_volume(spec, project_dir))
+            mount_warnings: List[str] = []
+            svc.volumes.append(parse_volume(spec, project_dir, mount_warnings))
+            project.warnings.extend(f"{svc_name}: {w}" for w in mount_warnings)
         svc.tmpfs = _as_list(cfg.get("tmpfs"))
 
         # network_mode replaces ordinary Compose network endpoints.
@@ -1054,8 +1112,6 @@ def load_project(
             svc.networks.append(net.name)
             svc.network_aliases[net.name] = aliases.get(key, [])
             endpoint = raw_svc_networks.get(key) if isinstance(raw_svc_networks, dict) else None
-            if endpoint is not None and not isinstance(endpoint, dict):
-                raise ComposeError(f"service {svc_name!r}, network {key!r}: expected mapping")
             if isinstance(endpoint, dict) and any(
                 option not in {"aliases", "ipv4_address"} and not str(option).startswith("x-")
                 for option in endpoint

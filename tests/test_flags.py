@@ -410,3 +410,49 @@ def test_local_config_digest_records_only_non_default_settings(tmp_path):
                local_config_digest(Service(name="a", image="x", entrypoint=[])),
                local_config_digest(Service(name="a", image="x", command=[]))}
     assert len(digests) == 5
+
+
+def test_env_file_passed_as_is_when_already_plain(tmp_path):
+    from wslc_compose.flags import wslc_env_file
+    plain = tmp_path / "plain.env"
+    plain.write_text("# comment\nA=1\n\nB=two words\nPASSTHROUGH\n")
+    assert wslc_env_file(str(plain)) == str(plain)
+    assert wslc_env_file(str(tmp_path / "missing.env")) == str(tmp_path / "missing.env")
+
+
+def test_env_file_compose_syntax_is_normalized_for_wslc(tmp_path, monkeypatch):
+    # wslc rejects `export KEY=...` and keeps quotes / inline comments in values
+    import os
+
+    from wslc_compose import flags
+    monkeypatch.setattr(flags, "_ENV_DIR", [])
+    registered = []
+    monkeypatch.setattr(flags.atexit, "register", lambda *a: registered.append(a))
+    monkeypatch.setenv("WHO", "bob")
+    fancy = tmp_path / "fancy.env"
+    fancy.write_text("export E=exported\nQ=\"quoted\"\nC=val # comment\nS='single $x'\nH=${WHO}\nBARE\n")
+    copy = flags.wslc_env_file(str(fancy))
+    assert copy != str(fancy) and os.path.dirname(copy) == flags._ENV_DIR[0]
+    with open(copy, encoding="utf-8") as handle:
+        assert handle.read() == "E=exported\nQ=quoted\nC=val\nS=single $x\nH=bob\nBARE\n"
+    assert registered and registered[0][1] == flags._ENV_DIR[0]  # removed at exit
+    assert flags.wslc_env_file(str(fancy)) == copy  # same private directory is reused
+    assert len(registered) == 1
+
+
+def test_env_file_interpolation_error_is_a_wslc_error(tmp_path):
+    from wslc_compose.flags import wslc_env_file
+    bad = tmp_path / "bad.env"
+    bad.write_text("A=${NOPE_ENV_X:?must be set}\n")
+    with pytest.raises(engine.WslcError, match="must be set"):
+        wslc_env_file(str(bad))
+
+
+def test_run_args_pass_the_normalized_env_file(tmp_path, monkeypatch):
+    from wslc_compose import flags
+    project = make_project(tmp_path)
+    service = project.services["web"]
+    service.env_files = [str(tmp_path / "x.env")]
+    monkeypatch.setattr(flags, "wslc_env_file", lambda path: path + ".normalized")
+    args = run_args(project, service)
+    assert args[args.index("--env-file") + 1] == str(tmp_path / "x.env") + ".normalized"

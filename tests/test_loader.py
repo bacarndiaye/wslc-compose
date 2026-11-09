@@ -412,10 +412,41 @@ services:
           size: 65536
 """)
 
-    mounts = load_project(str(tmp_path / "compose.yaml")).services["a"].volumes
+    project = load_project(str(tmp_path / "compose.yaml"))
+    mounts = project.services["a"].volumes
 
-    assert mounts[0].structured and mounts[0].options == ["propagation=rshared"]
-    assert mounts[0].read_only and mounts[1].options == ["size=65536"]
+    # #55: Compose keys become wslc --mount keys; unsupported ones are dropped with a warning
+    assert mounts[0].structured and mounts[0].options == []
+    assert any("bind.propagation is not supported by wslc" in w for w in project.warnings)
+    assert mounts[0].read_only and mounts[1].options == ["tmpfs-size=65536"]
+
+
+def test_long_form_mount_option_translation(tmp_path):
+    (tmp_path / "compose.yaml").write_text("""
+services:
+  a:
+    image: x
+    volumes:
+      - type: tmpfs
+        target: /t
+        tmpfs: {size: 1000, mode: 1770}
+      - type: bind
+        source: ./d
+        target: /d
+        bind: {recursive: enabled, create_host_path: true}
+      - type: volume
+        source: v
+        target: /v
+        volume: {nocopy: true, subpath: x}
+volumes:
+  v:
+""")
+    project = load_project(str(tmp_path / "compose.yaml"))
+    tmpfs, bind, volume = project.services["a"].volumes
+    assert tmpfs.options == ["tmpfs-size=1000", "tmpfs-mode=1770"]
+    assert bind.options == ["bind-recursive=enabled"]
+    assert volume.options == []
+    assert sum("is not supported by wslc" in w for w in project.warnings) == 2
 
 
 def _write(path, text):
@@ -849,7 +880,7 @@ services:
     assert a.labels == {"x.enabled": "true"}
     assert a.restart == "no"
     assert a.tty is True  # boolean settings still accept yes/no
-    assert a.volumes[0].options == ["create_host_path=true"]
+    assert a.volumes[0].options == []  # create_host_path is Compose-side, not a mount option
 
 
 def test_unquoted_port_is_not_read_as_base60(tmp_path):
@@ -954,7 +985,9 @@ def test_deploy_replicas_zero(tmp_path):
 
 
 def test_env_file_paths_and_long_syntax(tmp_path, monkeypatch):
+    import os
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))  # what ~ means on Windows
     project = _one(tmp_path, r"""
 services:
   a:
@@ -969,7 +1002,7 @@ services:
 """, files={"present.env": "A=1\n"})
     assert project.services["a"].env_files == [
         "C:\\cfg\\app.env",
-        str(tmp_path / "home" / "app.env"),
+        os.path.expanduser("~/app.env"),
         str(tmp_path / "present.env"),
         str(tmp_path / "required-missing.env"),  # still handed to wslc, which reports it
     ]
@@ -1114,3 +1147,32 @@ def test_entrypoint_and_command_reset_are_kept(tmp_path):
     project = _one(tmp_path, "services:\n  a:\n    image: alpine\n    entrypoint: []\n    command: []\n")
     a = project.services["a"]
     assert (a.entrypoint, a.command) == ([], [])
+
+
+def test_reset_and_override_on_a_whole_section(tmp_path):
+    base = tmp_path / "compose.yaml"
+    base.write_text("services:\n  a: {image: alpine}\nvolumes:\n  v1:\nnetworks:\n  n1:\n")
+    over = tmp_path / "override.yaml"
+    over.write_text("volumes: !reset {}\nnetworks: !override\n  n2:\n")
+    project = load_project([str(base), str(over)])
+    assert project.volumes == {}
+    assert list(project.networks) == ["n2", "default"]
+
+
+def test_volumes_merge_on_interpolated_container_path(tmp_path, monkeypatch):
+    monkeypatch.delenv("SRC", raising=False)
+    base = tmp_path / "compose.yaml"
+    base.write_text("services:\n  a:\n    image: alpine\n    volumes: ['${SRC:-./a}:/data']\n")
+    over = tmp_path / "override.yaml"
+    over.write_text("services:\n  a:\n    volumes: ['./b:/data']\n")
+    mounts = load_project([str(base), str(over)]).services["a"].volumes
+    assert [(m.source, m.target) for m in mounts] == [(str(tmp_path / "b"), "/data")]
+
+
+def test_merge_of_unparsable_volume_entries_still_reports_them(tmp_path):
+    base = tmp_path / "compose.yaml"
+    base.write_text("services:\n  a:\n    image: alpine\n    volumes: ['/anon']\n")
+    over = tmp_path / "override.yaml"
+    over.write_text("services:\n  a:\n    volumes: ['/anon']\n")
+    with pytest.raises(ComposeError, match="anonymous volumes are not supported"):
+        load_project([str(base), str(over)])

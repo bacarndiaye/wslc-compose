@@ -16,8 +16,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: pip install -e . pytest
-      - run: pytest -v
+      - run: pip install -e . pytest pytest-cov
+      - run: pytest -v --cov --cov-report=term-missing
 
   test-windows:
     runs-on: windows-latest
@@ -30,8 +30,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: pip install -e . pytest
-      - run: pytest -v
+      - run: pip install -e . pytest pytest-cov
+      - run: pytest -v --cov --cov-report=term-missing
 
   lint:
     runs-on: ubuntu-latest

@@ -228,20 +228,34 @@ def _format_created(value: str, now: Optional[datetime] = None) -> str:
     except (TypeError, ValueError):
         return value
 
+    return _human_duration(seconds) + " ago"
+
+
+def _human_duration(seconds: int) -> str:
+    """Port of docker/go-units HumanDuration, used by `docker compose ps`."""
+    if seconds < 1:
+        return "Less than a second"
+    if seconds == 1:
+        return "1 second"
     if seconds < 60:
-        unit = "second" if seconds == 1 else "seconds"
-        return f"{seconds} {unit} ago"
-    if seconds < 90:
-        return "About a minute ago"
-    if seconds < 45 * 60:
-        return f"{seconds // 60} minutes ago"
-    if seconds < 90 * 60:
-        return "About an hour ago"
-    if seconds < 24 * 60 * 60:
-        return f"{seconds // 3600} hours ago"
-    if seconds < 42 * 60 * 60:
-        return "About a day ago"
-    return f"{seconds // 86400} days ago"
+        return f"{seconds} seconds"
+    minutes = seconds // 60
+    if minutes == 1:
+        return "About a minute"
+    if minutes < 60:
+        return f"{minutes} minutes"
+    hours = int(seconds / 3600 + 0.5)
+    if hours == 1:
+        return "About an hour"
+    if hours < 48:
+        return f"{hours} hours"
+    if hours < 24 * 7 * 2:
+        return f"{hours // 24} days"
+    if hours < 24 * 30 * 2:
+        return f"{hours // 24 // 7} weeks"
+    if hours < 24 * 365 * 2:
+        return f"{hours // 24 // 30} months"
+    return f"{seconds // 3600 // 24 // 365} years"
 
 
 def _print_table(rows: List[List[str]], headers: List[str]) -> None:
@@ -498,7 +512,7 @@ def cmd_ps(ns: argparse.Namespace) -> int:
         containers = [c for c in containers if c["service"] in ns.services]
     if ns.quiet:
         for entry in containers:
-            print(entry["id"])
+            print(entry["id"] or entry["name"])  # wslc may list a container by name only
         return 0
     rows = [
         [

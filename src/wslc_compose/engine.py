@@ -39,10 +39,6 @@ def _is_self(path: str) -> bool:
                 if parent == current:
                     break
                 current = parent
-                if not current.lower().endswith(".exe"):
-                    continue
-                if candidate == current:
-                    return True
         return False
     except OSError:
         return False
@@ -151,21 +147,26 @@ def run_retried(
     retries: int = TRANSIENT_RETRIES,
     delay: float = TRANSIENT_DELAY,
 ) -> subprocess.CompletedProcess:
-    """`run(capture=True)` that retries failures matching TRANSIENT_ERROR_MARKERS."""
-    for attempt in range(1, retries + 1):
+    """`run(capture=True)` that retries failures matching TRANSIENT_ERROR_MARKERS.
+
+    `retries` is the total number of attempts (at least one is always made).
+    """
+    attempts = max(1, retries)
+    attempt = 1
+    while True:
         try:
             return run(args, capture=True, dry_run=dry_run)
         except WslcError as exc:
             transient = any(marker in str(exc) for marker in TRANSIENT_ERROR_MARKERS)
-            if not transient or attempt == retries:
+            if not transient or attempt >= attempts:
                 raise
             print(
                 f"wslc-compose: wslc {' '.join(args[:2])} hit a transient error, "
-                f"retrying in {delay:g}s ({attempt}/{retries - 1})...",
+                f"retrying in {delay:g}s ({attempt}/{attempts - 1})...",
                 file=sys.stderr,
             )
             time.sleep(delay)
-    raise AssertionError("unreachable")
+            attempt += 1
 
 
 def popen(args: List[str], **kwargs) -> subprocess.Popen:
@@ -246,9 +247,7 @@ def inspect(object_id: str) -> Optional[dict]:
         result = capture_json(["inspect", object_id])
     except WslcError:
         return None
-    if isinstance(result, list):
-        return result[0] if result else None
-    return result
+    return result[0] if result else None  # capture_json always returns a list
 
 
 def inspect_many(ids: List[str]) -> Dict[str, dict]:
