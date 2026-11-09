@@ -61,10 +61,10 @@ this to map each container to a compose service and to know what to stop in step
 ## Step 2 — Install wslc-compose and prepare the compose file
 
 ```console
-pipx install "wslc-compose==0.5.0"      # from PyPI
+pipx install "wslc-compose==0.5.1"      # from PyPI
 ```
 
-(or `uv tool install "wslc-compose==0.5.0"`; [wslc-compose on PyPI](https://pypi.org/project/wslc-compose/)).
+(or `uv tool install "wslc-compose==0.5.1"`; [wslc-compose on PyPI](https://pypi.org/project/wslc-compose/)).
 On Debian/Ubuntu `pip install` is blocked (`externally-managed-environment`): use `sudo apt install pipx`
 or the one-liner installer, which needs only `curl`:
 
