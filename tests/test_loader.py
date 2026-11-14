@@ -469,6 +469,37 @@ def test_include_conflict_missing_and_cycle(tmp_path):
     _write(tmp_path / "c2.yaml", "include:\n  - c1.yaml\nservices:\n  c2:\n    image: x\n")
     with pytest.raises(ComposeError, match="circular"):
         load_project(str(tmp_path / "c1.yaml"))
+        
+def test_include_merges_networks(tmp_path):
+    _write(
+        tmp_path / "compose.yaml",
+        """
+include:
+- svc/web.yaml
+services:
+    db:
+        image: postgres
+networks:
+    testnet:
+        driver: bridge
+""")
+    _write(
+        tmp_path / "svc" / "web.yaml",
+        """
+services:
+    web:
+        image: nginx
+        volumes:
+        - ./html:/usr/share/nginx/html:ro
+        env_file: ./web.env
+networks:
+    testnet:
+        driver: bridge
+""")
+    project = load_project(str(tmp_path / "compose.yaml"))
+    assert set(project.networks) == {"default","testnet"}
+    testnet = project.networks["testnet"]
+    assert testnet.driver == "bridge"
 
 
 def _secrets_project(tmp_path, body, files=("tok.txt", "cfg.txt")):

@@ -441,15 +441,7 @@ def _read_compose(path: str, stack: Tuple[str, ...] = ()) -> dict:
             for section in _MERGED_SECTIONS:
                 items = included.get(section) or {}
                 target = raw.setdefault(section, {})
-                if target is None:
-                    target = raw[section] = {}
-                for key, value in items.items():
-                    if key in target:
-                        raise ComposeError(
-                            f"{path}: {section[:-1]} {key!r} from {rel} conflicts with an "
-                            "existing definition"
-                        )
-                    target[key] = value
+                raw[section] = merge_compose(path, rel, target, items, False)
     return raw
 
 
@@ -488,11 +480,11 @@ def _volume_target(entry):
         return str(entry)
 
 
-def _merge_value(key, base, over):
+def _merge_value(path: str, loaded_file: str, prefix, key, base, over, override_values):
     if key in _KEYVALUE_KEYS or key in _NAMED_KEYS:
         b, o = _to_mapping(base, key in _KEYVALUE_KEYS), _to_mapping(over, key in _KEYVALUE_KEYS)
         if isinstance(b, dict) and isinstance(o, dict):
-            return _merge_dicts(b, o)
+            return _merge_dicts(path, loaded_file, prefix + "." + key,b, o, override_values)
         return over
     if key == "volumes" and isinstance(base, list) and isinstance(over, list):
         overridden = {_volume_target(v) for v in over}
@@ -500,31 +492,49 @@ def _merge_value(key, base, over):
     if key in _APPEND_KEYS and isinstance(base, list) and isinstance(over, list):
         return base + [v for v in over if v not in base]
     if isinstance(base, dict) and isinstance(over, dict):
-        return _merge_dicts(base, over)
+        return _merge_dicts(path, loaded_file, prefix, base, over, override_values)
     return over
 
 
-def _merge_dicts(base: dict, over: dict) -> dict:
+def _merge_dicts(path: str, loaded_file: str, prefix: str, base: dict, over: dict, override_values: bool) -> dict:
     result = dict(base)
     for key, value in over.items():
-        result[key] = _merge_value(key, result[key], value) if key in result else value
+        if override_values:
+            result[key] = _merge_value(path, loaded_file, prefix, key, result[key], value, override_values) if key in result else value
+        else:
+            raise ComposeError(
+                f"{path}: {prefix} {key!r} from {loaded_file} conflicts with an "
+                "existing definition"
+            )            
     return result
 
 
-def merge_compose(base: dict, override: dict) -> dict:
+def merge_compose(path: str, loaded_file: str, base: dict, override: dict, override_values: bool) -> dict:
     """Overlay `override` on `base` like `docker compose -f a.yml -f b.yml`."""
     result = dict(base)
     for key, value in override.items():
-        if key in ("services", "networks", "volumes", "secrets", "configs") and key in result:
+        if key in result:
             merged = dict(result[key] or {})
             for name, cfg in (value or {}).items():
                 if name in merged and isinstance(merged[name], dict) and isinstance(cfg, dict):
-                    merged[name] = _merge_dicts(merged[name], cfg)
+                    merged[name] = _merge_dicts(path, loaded_file, key + "." + name, merged[name], cfg, override_values)
                 else:
-                    merged[name] = cfg
+                    if override_values or merged[name] == cfg:
+                        merged[name] = cfg
+                    else:
+                        raise ComposeError(
+                            f"{path}: {key} {name!r} from {loaded_file} conflicts with an "
+                            "existing definition"
+                        )
             result[key] = merged
         else:
-            result[key] = value
+            if override_values or key not in result or result[key] == value:
+                result[key] = value
+            else:
+                raise ComposeError(
+                    f"{path}: {key} from {loaded_file} conflicts with an "
+                    "existing definition"
+                )
     return result
 
 
@@ -681,7 +691,7 @@ def load_project(
 
     raw = _read_compose(compose_files[0])
     for extra in compose_files[1:]:
-        raw = merge_compose(raw, _read_compose(extra))
+        raw = merge_compose(compose_files[0], extra, raw, _read_compose(extra), True)
     if not raw.get("services"):
         where = compose_file if len(compose_files) == 1 else ", ".join(compose_files)
         raise ComposeError(f"{where}: no 'services' section found")
