@@ -684,7 +684,7 @@ def _resolve_extends(services: dict, main_file: str, env: Dict[str, str]) -> Non
             base_pool, base_where = load(path), path
         base = resolve(str(extends["service"]), base_pool, base_where, stack + (key,))
         local = {k: v for k, v in cfg.items() if k != "extends"}
-        merged = _merge_dicts(copy.deepcopy({k: v for k, v in base.items() if k != "extends"}), local)
+        merged = _merge_dicts(main_file, base_where, "", copy.deepcopy({k: v for k, v in base.items() if k != "extends"}), local, True)
         cache[key] = merged
         return merged
 
@@ -827,7 +827,7 @@ def merge_compose(path: str, loaded_file: str, base: dict, override: dict, overr
                 elif isinstance(cfg, _Override):
                     merged[name] = cfg.value
                 elif name in merged and isinstance(merged[name], dict) and isinstance(cfg, dict):
-                    merged[name] = _merge_dicts(merged[name], cfg)
+                    merged[name] = _merge_dicts(path, loaded_file, name, merged[name], cfg, override_values)
                 else:
                     if override_values or merged[name] == cfg:
                         merged[name] = cfg
