@@ -738,6 +738,8 @@ def _read_compose(path: str, stack: Tuple[str, ...] = ()) -> dict:
             for section in _MERGED_SECTIONS:
                 items = included.get(section) or {}
                 target = raw.setdefault(section, {})
+                if target is None:
+                    target = raw[section] = {}
                 raw[section] = merge_compose(path, rel, target, items, False)
     return raw
 
