@@ -241,3 +241,32 @@ def test_find_wslc_skips_wrapper_and_checks_remaining_path_entries(monkeypatch):
     engine.find_wslc.cache_clear()
 
     assert engine.find_wslc() == native
+
+
+def test_run_reports_a_missing_binary_cleanly(monkeypatch):
+    # #41: a wrong WSLC_COMPOSE_BIN must not end in a traceback
+    monkeypatch.setattr(engine, "find_wslc", lambda: "/nonexistent/wslc.exe")
+    with pytest.raises(WslcError, match="cannot run /nonexistent/wslc.exe"):
+        engine.run(["list"])
+    with pytest.raises(WslcError, match="cannot run"):
+        engine.popen(["logs", "x"])
+
+
+@pytest.mark.parametrize("name, present", [
+    ("localhost:5000/app:1.0", True),
+    ("localhost:5000/app", False),
+    ("app", False),          # untagged means latest, and only app:old exists
+    ("app:old", True),
+    ("nginx", True),         # listed as docker.io/library/nginx:latest
+    ("docker.io/library/nginx:latest", True),
+    ("redis:alpine", False),
+])
+def test_image_exists_matches_repository_and_tag(monkeypatch, name, present):
+    # #53
+    images = [
+        {"Repository": "localhost:5000/app", "Tag": "1.0"},
+        {"Repository": "app", "Tag": "old"},
+        {"Repository": "docker.io/library/nginx", "Tag": "latest"},
+    ]
+    monkeypatch.setattr(engine, "capture_json", lambda args: images)
+    assert engine.image_exists(name) is present

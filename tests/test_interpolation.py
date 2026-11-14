@@ -46,3 +46,26 @@ def test_shell_command_not_interpolated():
 def test_tree():
     tree = {"a": ["$NAME", 1, None], "b": {"c": "${MISSING:-x}"}}
     assert interpolate_tree(tree, ENV) == {"a": ["world", 1, None], "b": {"c": "x"}}
+
+
+def test_nested_default_is_interpolated():
+    # #47: Compose expands references inside the default value
+    env = {"FALLBACK": "fb", "NAME": "world"}
+    assert interpolate("${UNSET:-${FALLBACK}}", env) == "fb"
+    assert interpolate("${UNSET:-$FALLBACK}", env) == "fb"
+    assert interpolate("${UNSET:-a${U2:-${FALLBACK}}b}", env) == "afbb"
+    assert interpolate("${NAME:+[${FALLBACK}]}", env) == "[fb]"
+    assert interpolate("${NAME:-${FALLBACK}}", env) == "world"
+
+
+def test_default_keeps_escaped_dollar_and_malformed_references():
+    assert interpolate("${UNSET:-$$x}", ENV) == "$x"
+    assert interpolate("${", ENV) == "${"
+    assert interpolate("${1abc}", ENV) == "${1abc}"
+    assert interpolate("a$", ENV) == "a$"
+    assert interpolate("${NAME}}", ENV) == "world}"
+
+
+def test_required_message_is_interpolated():
+    with pytest.raises(InterpolationError, match="set NAME=world"):
+        interpolate("${MISSING:?set NAME=$NAME}", ENV)

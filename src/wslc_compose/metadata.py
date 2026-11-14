@@ -11,6 +11,7 @@ from wslc_compose import (
     LABEL_CONFIG_HASH,
     LABEL_ENV_FILE,
     LABEL_INDEX,
+    LABEL_LOCAL_CONFIG,
     LABEL_NETWORK,
     LABEL_PROJECT,
     LABEL_SERVICE,
@@ -19,7 +20,7 @@ from wslc_compose import (
     LABEL_WORKING_DIR,
     __version__,
 )
-from wslc_compose.model import Project, Service
+from wslc_compose.model import Project, Service, local_config_digest
 
 
 def _project_labels(project: Project) -> Dict[str, str]:
@@ -41,6 +42,7 @@ def container_labels(project: Project, service: Service, index: int) -> Dict[str
             LABEL_SERVICE: service.name,
             LABEL_INDEX: str(index),
             LABEL_CONFIG_HASH: service.config_hash(project),
+            LABEL_LOCAL_CONFIG: local_config_digest(service),
         }
     )
     return labels

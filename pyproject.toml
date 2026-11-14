@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "wslc-compose"
-version = "0.5.0"
+version = "0.6.0"
 description = "docker-compose style orchestration for WSL containers (wslc)"
 readme = "README.md"
 license = "MIT"
@@ -29,6 +29,11 @@ Issues = "https://github.com/bacarndiaye/wslc-compose/issues"
 wslc-compose = "wslc_compose.cli:main"
 wslc = "wslc_compose.shim:main"
 
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/wslc_compose"]
 
@@ -43,7 +48,12 @@ select = ["E4", "E7", "E9", "F", "I"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
-[dependency-groups]
-dev = [
-    "pytest>=8.4.2",
-]
+[tool.coverage.run]
+branch = true
+source = ["wslc_compose"]
+
+[tool.coverage.report]
+# Every line and branch is tested (Linux and Windows); CI fails below 100%.
+fail_under = 100
+show_missing = true
+skip_covered = true

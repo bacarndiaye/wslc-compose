@@ -22,7 +22,7 @@ naming, config-drift detection and scaling included.
 ## Install in one line
 
 ```console
-pipx install "wslc-compose==0.5.0"      # or: uv tool install "wslc-compose==0.5.0"
+pipx install "wslc-compose==0.6.0"      # or: uv tool install "wslc-compose==0.6.0"
 ```
 
 Latest release: [![Latest release](https://img.shields.io/github/v/release/bacarndiaye/wslc-compose?label=)](https://github.com/bacarndiaye/wslc-compose/releases/latest) — published on **[PyPI](https://pypi.org/project/wslc-compose/)** · [more install options](#installation).
@@ -95,12 +95,12 @@ Two executables are installed:
 version keeps a future breaking 1.0 from landing by surprise:
 
 ```console
-pipx install "wslc-compose==0.5.0"
+pipx install "wslc-compose==0.6.0"
 # or
-uv tool install "wslc-compose==0.5.0"
+uv tool install "wslc-compose==0.6.0"
 ```
 
-(`0.5.0` is the latest release. Use `==0.*` instead to follow the 0.x series automatically, or drop the version to always get the newest.)
+(`0.6.0` is the latest release. Use `==0.*` instead to follow the 0.x series automatically, or drop the version to always get the newest.)
 
 Upgrade later with `pipx upgrade wslc-compose` (or `uv tool upgrade wslc-compose`).
 
@@ -113,7 +113,7 @@ Don't use `--break-system-packages`; install the CLI in its own isolated environ
 ```console
 sudo apt install pipx          # Debian 12+/Ubuntu 23.04+; then reopen your shell
 pipx ensurepath
-pipx install "wslc-compose==0.5.0"
+pipx install "wslc-compose==0.6.0"
 ```
 
 No `pipx` available (or you'd rather not install it)? The [one-liner below](#one-liner-no-pip-venv-or-pipx-on-your-distro)
@@ -175,9 +175,12 @@ $env:WSLC_COMPOSE_SOURCE = $PWD; .\install.ps1    # or: pip install -e .
 
 `wslc-compose` finds the wslc CLI automatically, in this order:
 
-1. `$WSLC_COMPOSE_BIN` (explicit override)
-2. `wslc.exe` / `wslc` on `PATH` (Windows interop makes `wslc.exe` visible inside WSL)
-3. `C:\Program Files\WSL\wslc.exe` (default install location)
+1. `$WSLC_COMPOSE_BIN` (explicit override, used as-is; a wrong path is reported cleanly)
+2. `C:\Program Files\WSL\wslc.exe` (default install location, also as
+   `/mnt/c/Program Files/WSL/wslc.exe` inside WSL) — checked first so the `wslc` shim
+   installed by wslc-compose is never mistaken for the real CLI
+3. `wslc.exe` / `wslc` on `PATH` (Windows interop makes `wslc.exe` visible inside WSL),
+   skipping the wslc-compose shim itself
 
 ## Quick start
 
@@ -233,6 +236,12 @@ Apply to every subcommand and go **before** it: `wslc-compose -f other.yml up -d
 Create networks and volumes, build missing images, then create/start containers in
 `depends_on` order. Idempotent: up-to-date running containers are left alone.
 
+If a container fails to start (a host port already in use, an image that will not run...),
+`up` reports it and carries on with the other services, like `docker compose` and
+`podman-compose`. Services that depend on the failed one (unless `required: false`) are
+skipped. At the end `up` prints which services failed, does not attach to logs, and exits
+with status 1; the containers that did start keep running.
+
 | Option | Description |
 |---|---|
 | `-d, --detach` | do not attach to logs after starting |
@@ -257,12 +266,13 @@ Stop and remove all of the project's containers, then remove its non-external ne
 ### `ps [SERVICE...]`
 
 List the project's containers (name, service, image, status, ports).
-`-q` prints container IDs only.
+`-q` prints container IDs only (the name when wslc reports no ID).
 
 ### `logs [SERVICE...]`
 
 Show container logs, multiplexed and prefixed per container
-(`my-project-web-1 | ...`).
+(`my-project-web-1 | ...`), **including stopped and crashed containers** — e.g. to see
+why a service failed during `up`. The exit status is non-zero when `wslc logs` fails.
 
 | Option | Description |
 |---|---|
@@ -282,7 +292,8 @@ Run a command in a running container of SERVICE.
 | `-e, --env K=V` | extra environment variables (repeatable) |
 | `-T, --no-tty` | disable TTY allocation (for scripts/pipes) |
 
-A TTY is allocated automatically when stdin is a terminal.
+stdin is always attached, so piping works (`cat dump.sql | wslc-compose exec -T db psql`);
+a TTY is allocated automatically when stdin is a terminal, unless `-T` is given.
 
 ### `start / stop / restart [SERVICE...]`
 
@@ -313,18 +324,20 @@ Show the wslc-compose and wslc versions.
 |---|---|
 | `image` | `wslc run <image>` / `wslc pull` |
 | `build` (`context`, `dockerfile`, `args`, `target`, `pull`) | `wslc build -t <project>-<service>` |
-| `command`, `entrypoint` (string or list) | trailing args / `--entrypoint` |
+| `command`, `entrypoint` (string or list; `[]` clears the image's value) | trailing args / `--entrypoint` (`entrypoint: []` → `--entrypoint ""`; `command: []` restates the image ENTRYPOINT without its CMD) |
 | `container_name` | `--name` (disables scaling for that service) |
-| `environment` (list & map), `env_file` | `-e`, `--env-file` |
-| `ports` (short & long syntax, `ip:host:container`, `/udp`, ranges `8000-8005`) | `-p` |
+| `environment` (list & map; `FOO` without a value is taken from the shell / `.env`) | `-e` |
+| `env_file` (path, list, or `{path, required: false}`; `.env` syntax: `export`, quotes, `# comments`, `${VAR}`) | `--env-file` (a normalized private copy when the file uses syntax wslc reads literally) |
+| `ports` (short & long syntax, `ip:host:container`, `ip::container`, `[::1]:host:container`, `/udp`, ranges `8000-8005`) | `-p` |
 | `volumes` — named volumes | `wslc volume create` + `-v name:/path` |
-| `volumes` — bind mounts (`./rel`, `/abs`, `~`, `E:\win\path`), `:ro` | `-v` with [path translation](#volumes-and-path-translation) |
+| `volumes` — bind mounts (`./rel`, `.\rel`, `/abs`, `~`, `E:\win\path`), `:ro` | `-v` with [path translation](#volumes-and-path-translation) |
+| `volumes` long syntax options: `tmpfs.size` / `tmpfs.mode`, `bind.recursive` | `--mount ...,tmpfs-size=`, `tmpfs-mode=`, `bind-recursive=` (`bind.propagation`, `bind.selinux`, `volume.nocopy`, `volume.subpath` are not supported by wslc: warned, ignored) |
 | `tmpfs` (top-level list or `type: tmpfs`) | `--tmpfs` |
 | Multiple `networks`, per-endpoint `aliases` / `ipv4_address`, `external: true`, custom `name:` | Native `create`, `network connect`, `start`; one-network services use `run` |
 | Network `driver`, `driver_opts`, `labels`, `internal`, IPv4 IPAM `subnet` / `gateway` / `ip_range` | `network create --driver --opt --internal --subnet --gateway --ip-range` |
 | `depends_on` (list & map) | topological start/creation order; `condition: service_healthy` and `service_completed_successfully` are honored (see [Waiting for dependencies](#waiting-for-dependencies)) |
-| `healthcheck` (`test`, `interval`, `timeout`, `start_period`, `retries`, `disable`) | `--health-cmd`, `--health-interval`, `--health-timeout`, `--health-start-period`, `--health-retries`, `--no-healthcheck` — the status shows in `ps` as `(healthy)` / `(unhealthy)` |
-| `deploy.replicas` | number of containers (see also `--scale`) |
+| `healthcheck` (`test` as `CMD` / `CMD-SHELL` / `NONE`, `interval`, `timeout`, `start_period`, `retries`, `disable`; without `test` the options tune the image's own healthcheck) | `--health-cmd`, `--health-interval`, `--health-timeout`, `--health-start-period`, `--health-retries`, `--no-healthcheck` — the status shows in `ps` as `(healthy)` / `(unhealthy)` |
+| `deploy.replicas` (including `0`) | number of containers (see also `--scale`) |
 | `deploy.resources.limits.cpus` / `.memory`, `cpus`, `mem_limit` | `--cpus`, `-m` |
 | `deploy.resources.reservations.devices` (gpu), `gpus` | `--gpus` |
 | `shm_size`, `ulimits`, `stop_signal` | `--shm-size`, `--ulimit`, `--stop-signal` |
@@ -338,6 +351,8 @@ Show the wslc-compose and wslc versions.
 | `restart: always` / `"no"` | `--restart always` — **needs wslc ≥ 3.0.5**; `unless-stopped` and `on-failure[:N]` are not supported by wslc (warned, ignored) |
 | `cap_add`, `cap_drop` | `--cap-add`, `--cap-drop` — **needs wslc ≥ 3.0.5**; may be blocked by the `AllowWSLContainerPrivileged` policy |
 | `include` (string, list, or `path:` mapping) | other compose files merged into the project; relative paths inside an included file resolve against *its* directory |
+| `extends` (`extends: name`, `{service: name}`, `{service: name, file: other.yaml}`) | the base service's settings, overlaid by the local ones with the same rules as multiple `-f` files |
+| `!reset` / `!override` YAML tags | drop / replace an inherited value when files are overlaid |
 
 Keys that wslc cannot honor yet are **accepted and reported as a warning** instead of
 failing, so your existing files keep working: `privileged`, `devices`, `sysctls`, `init`,
@@ -347,7 +362,13 @@ Rejected with an explicit error (no silent surprise): `environment:`/`external:`
 configs, undefined secret/config references, `build.secrets`, duplicate service/network/volume
 names across `include`d files, circular or missing includes, anonymous volumes
 (`- /data` without a source), references to undeclared networks/volumes, circular
-`depends_on`, scaling a service that sets `container_name`.
+`depends_on` or `extends`, scaling a service that sets `container_name`, `--scale` for an
+unknown service, invalid YAML, a boolean setting that is not `true`/`false`/`yes`/`no`.
+
+YAML is read like Docker Compose (YAML 1.2): only `true`/`false` are booleans, so
+`FEATURE: yes` keeps the value `yes` and an unquoted `- 22:22` port stays `22:22`; boolean
+settings (`tty`, `external`, `read_only`...) also accept `yes`/`no`/`on`/`off` and
+interpolated strings such as `${DEBUG:-false}`.
 
 ## Waiting for dependencies
 
@@ -380,15 +401,15 @@ services:
 | `service_healthy` | its healthcheck reports `healthy` (all replicas) |
 | `service_completed_successfully` | it has exited with code 0 |
 
-`up` stops with an error as soon as a condition can never be met: the dependency is
-`unhealthy`, has exited, has **no healthcheck** (define one in the compose file or the image),
-or exited non-zero. Use `--wait-timeout SEC` to bound each wait. Dependencies that are not
+A service is skipped (and `up` ends with status 1) as soon as one of its conditions can never
+be met: the dependency is `unhealthy`, has exited, has **no healthcheck** (define one in the
+compose file or the image), or exited non-zero. Services that do not depend on it still start. Use `--wait-timeout SEC` to bound each wait. Dependencies that are not
 part of the `up` (other profiles, scaled to 0) are not waited on, and `--dry-run` only prints
 what it would wait for.
 
 With `required: false` a dependency is optional: it is not pulled in when it is not selected
 (profile off, or `up web` only), and when it *is* started but its condition fails (unhealthy,
-exited, timeout) `up` prints a warning and carries on instead of stopping.
+exited, timeout) `up` prints a warning and starts the dependent service anyway.
 
 ```yaml
 depends_on:
@@ -440,7 +461,9 @@ COMPOSE_FILE=compose.yaml:prod.yaml wslc-compose config
 
 Files are overlaid in order: mappings are merged, `ports`/`expose`/`dns`/`env_file`/... are
 appended, `environment`/`labels` merge per key, `volumes` merge per container path, and
-scalars such as `image` or `command` are replaced. Relative paths resolve against the
+scalars such as `image` or `command` are replaced. Each file is interpolated before the
+overlay. `!reset` drops an inherited value (`ports: !reset []`, or a whole service or
+section) and `!override` replaces it instead of merging (`environment: !override {A: "1"}`). Relative paths resolve against the
 **first** file's directory. A file may omit `services` (e.g. only `volumes:` or `include:`)
 as long as the merged result has at least one service.
 
@@ -455,10 +478,19 @@ Identical to docker compose:
 | `${VAR-default}` | default only if unset |
 | `${VAR:?message}` / `${VAR?message}` | abort with message if missing |
 | `${VAR:+alt}` / `${VAR+alt}` | alt if set |
+| `${VAR:-${OTHER:-x}}` | defaults and alternatives are interpolated themselves (nesting) |
 | `$$` | literal `$` (e.g. `$$(cmd)` reaches the container shell as `$(cmd)`) |
 
 Precedence: process environment > `.env` file (in the project directory, or
-`--env-file`). Shell constructs like `$(date)` are left untouched.
+`--env-file`). Shell constructs like `$(date)` are left untouched; a missing required
+variable (`${VAR:?message}`) stops with that message.
+
+In the `.env` file (and in `env_file` files): `export KEY=...` is accepted, quotes are
+removed, and an inline comment starts at ` #` (`TAG=3.20 # pinned` → `3.20`). `${VAR}`
+references are expanded from the lines above and the process environment, except inside
+single quotes. To keep existing values intact, backslashes are not escape sequences
+(`"C:\new"` stays `C:\new`), `$$` stays `$$`, and a bare `$name` is only replaced when
+`name` is defined (`pa$word` stays `pa$word`).
 
 ## Naming conventions and labels
 
@@ -482,6 +514,7 @@ com.wslc-compose.project.working_dir         absolute project directory
 com.wslc-compose.project.config_files        JSON array of absolute Compose file paths
 com.wslc-compose.project.environment_file    absolute --env-file path, when supplied
 com.wslc-compose.config-hash                 resolved service or resource configuration hash
+com.wslc-compose.local-config-hash           settings outside the shared hash (env_file contents, mount options...)
 com.wslc-compose.service                     container service name
 com.wslc-compose.container-number            container replica index (1..N)
 com.wslc-compose.network                     Compose network key
@@ -528,6 +561,16 @@ hash of the freshly resolved service configuration:
 Changing anything in the service definition (image, env, ports, mounts, ...) or in
 interpolated variables therefore triggers a clean recreation of just the affected
 services on the next `up`.
+
+The shared `config-hash` (`v2:`) is kept identical across wslc-compose versions and
+compatible tools. Settings it does not cover — the **contents** of `env_file` files,
+long-syntax mount options, `entrypoint: []` / `command: []` — are tracked by the
+separate `local-config-hash` label, so editing an env file also recreates the container.
+Containers created before 0.6.0 do not carry that label and are left as they are:
+upgrading wslc-compose never recreates anything by itself.
+
+A container that fails to start does not stop the run: see [`up`](#up-service) for how
+failures, skipped dependents and the exit status are reported.
 
 ## Networking
 
@@ -779,11 +822,13 @@ cd wslc-compose
 python3 -m venv .venv && . .venv/bin/activate     # required on Debian/Ubuntu (PEP 668)
 pip install -e . pytest ruff      # or the uv equivalent
 pytest                            # unit tests, no wslc required
+pytest --cov                      # with pytest-cov: line + branch coverage, must stay at 100%
 ruff check src tests scripts
 wslc-compose --dry-run -f examples/demo/compose.yaml up -d   # inspect generated commands
 ```
 
-CI runs the test matrix (Python 3.9 / 3.12 / 3.14 on Linux, 3.9 / 3.13 on Windows) and ruff on every push and PR.
+CI runs the test matrix (Python 3.9 / 3.12 / 3.14 on Linux, 3.9 / 3.13 on Windows) with a
+**100% line and branch coverage gate**, and ruff, on every push and PR.
 
 ### Releasing
 
