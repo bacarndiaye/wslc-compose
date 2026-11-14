@@ -531,6 +531,35 @@ networks:
     assert set(project.networks) == {"default","testnet"}
     testnet = project.networks["testnet"]
     assert testnet.driver == "bridge"
+    
+def test_include_merges_different_networks_fails(tmp_path):
+    _write(
+        tmp_path / "compose.yaml",
+    """
+include:
+- svc/web.yaml
+services:
+    db:
+        image: postgres
+networks:
+    testnet:
+        driver: bridge
+""")
+    _write(
+        tmp_path / "svc" / "web.yaml",
+    """
+services:
+    web:
+        image: nginx
+        volumes:
+        - ./html:/usr/share/nginx/html:ro
+        env_file: ./web.env
+networks:
+    testnet:
+        driver: nat
+""")
+    with pytest.raises(ComposeError, match="conflicts"):
+        load_project(str(tmp_path / "compose.yaml"))
 
 
 def _secrets_project(tmp_path, body, files=("tok.txt", "cfg.txt")):

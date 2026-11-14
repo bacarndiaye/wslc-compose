@@ -684,7 +684,7 @@ def _resolve_extends(services: dict, main_file: str, env: Dict[str, str]) -> Non
             base_pool, base_where = load(path), path
         base = resolve(str(extends["service"]), base_pool, base_where, stack + (key,))
         local = {k: v for k, v in cfg.items() if k != "extends"}
-        merged = _merge_dicts(main_file, base_where, "", copy.deepcopy({k: v for k, v in base.items() if k != "extends"}), local, True)
+        merged = _merge_dicts(copy.deepcopy({k: v for k, v in base.items() if k != "extends"}), local)
         cache[key] = merged
         return merged
 
@@ -779,11 +779,11 @@ def _volume_target(entry):
         return str(entry)
 
 
-def _merge_value(path: str, loaded_file: str, prefix, key, base, over, override_values):
+def _merge_value(key, base, over):
     if key in _KEYVALUE_KEYS or key in _NAMED_KEYS:
         b, o = _to_mapping(base, key in _KEYVALUE_KEYS), _to_mapping(over, key in _KEYVALUE_KEYS)
         if isinstance(b, dict) and isinstance(o, dict):
-            return _merge_dicts(path, loaded_file, prefix + "." + key,b, o, override_values)
+            return _merge_dicts(b, o)
         return over
     if key == "volumes" and isinstance(base, list) and isinstance(over, list):
         overridden = {_volume_target(v) for v in over}
@@ -791,11 +791,11 @@ def _merge_value(path: str, loaded_file: str, prefix, key, base, over, override_
     if key in _APPEND_KEYS and isinstance(base, list) and isinstance(over, list):
         return base + [v for v in over if v not in base]
     if isinstance(base, dict) and isinstance(over, dict):
-        return _merge_dicts(path, loaded_file, prefix, base, over, override_values)
+        return _merge_dicts(base, over)
     return over
 
 
-def _merge_dicts(path: str, loaded_file: str, prefix: str, base: dict, over: dict, override_values: bool) -> dict:
+def _merge_dicts(base: dict, over: dict) -> dict:
     result = dict(base)
     for key, value in over.items():
         if isinstance(value, _Reset):
@@ -803,13 +803,7 @@ def _merge_dicts(path: str, loaded_file: str, prefix: str, base: dict, over: dic
         elif isinstance(value, _Override):
             result[key] = value.value
         else:
-            if override_values:
-                result[key] = _merge_value(path, loaded_file, prefix, key, result[key], value, override_values) if key in result else value
-            else:
-                raise ComposeError(
-                    f"{path}: {prefix} {key!r} from {loaded_file} conflicts with an "
-                    "existing definition"
-                )
+            result[key] = _merge_value(key, result[key], value) if key in result else value
     return result
 
 
@@ -829,7 +823,7 @@ def merge_compose(path: str, loaded_file: str, base: dict, override: dict, overr
                 elif isinstance(cfg, _Override):
                     merged[name] = cfg.value
                 elif name in merged and isinstance(merged[name], dict) and isinstance(cfg, dict):
-                    merged[name] = _merge_dicts(path, loaded_file, name, merged[name], cfg, override_values)
+                    merged[name] = _merge_dicts(merged[name], cfg)
                 else:
                     if override_values or merged[name] == cfg:
                         merged[name] = cfg
@@ -840,13 +834,7 @@ def merge_compose(path: str, loaded_file: str, base: dict, override: dict, overr
                         )
             result[key] = merged
         else:
-            if override_values or key not in result or result[key] == value:
-                result[key] = value
-            else:
-                raise ComposeError(
-                    f"{path}: {key} from {loaded_file} conflicts with an "
-                    "existing definition"
-                )
+            result[key] = value
     return result
 
 
