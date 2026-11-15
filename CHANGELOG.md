@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Fixed
+- Without `-f` / `COMPOSE_FILE`, `compose.override.yaml` (or `.yml`, `docker-compose.override.*`)
+  next to the auto-detected file is overlaid on it, as Docker Compose does (#59). A project
+  that already has such a file gets its settings applied, so the next `up` recreates the
+  affected containers.
 - `include:` accepts a service, network, volume, secret or config defined identically in
   the including and the included file; differing definitions are still a conflict (#58).
 

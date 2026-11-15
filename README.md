@@ -224,7 +224,7 @@ Apply to every subcommand and go **before** it: `wslc-compose -f other.yml up -d
 
 | Option | Description |
 |---|---|
-| `-f, --file FILE` | compose file to use; **repeat to overlay several** (later files win, like `docker compose -f a.yml -f b.yml`). Paths may also be joined with `:` (`;` on Windows) or set via `COMPOSE_FILE`. Default: auto-detect in `.` and parent directories |
+| `-f, --file FILE` | compose file to use; **repeat to overlay several** (later files win, like `docker compose -f a.yml -f b.yml`). Paths may also be joined with `:` (`;` on Windows) or set via `COMPOSE_FILE`. Default: auto-detect in `.` and parent directories, plus `compose.override.yaml` next to the detected file |
 | `-p, --project-name NAME` | project name (default: `name:` key, else directory name) |
 | `--env-file FILE` | alternate `.env` file for interpolation |
 | `--profile NAME` | enable a compose profile (repeatable) |
@@ -458,6 +458,10 @@ Boundaries:
 wslc-compose -f compose.yaml -f compose.override.yaml up -d
 COMPOSE_FILE=compose.yaml:prod.yaml wslc-compose config
 ```
+
+Without `-f` or `COMPOSE_FILE`, an override file next to the auto-detected one
+(`compose.override.yml`, `compose.override.yaml`, `docker-compose.override.yml` or
+`docker-compose.override.yaml`, first found) is overlaid on it, as Docker Compose does.
 
 Files are overlaid in order: mappings are merged, `ports`/`expose`/`dns`/`env_file`/... are
 appended, `environment`/`labels` merge per key, `volumes` merge per container path, and

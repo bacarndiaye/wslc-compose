@@ -31,6 +31,13 @@ COMPOSE_FILENAMES = (
     "docker-compose.yml",
     "docker-compose.yaml",
 )
+# Overlaid on the auto-detected file when present next to it (not with -f / COMPOSE_FILE).
+OVERRIDE_FILENAMES = (
+    "compose.override.yml",
+    "compose.override.yaml",
+    "docker-compose.override.yml",
+    "docker-compose.override.yaml",
+)
 
 # compose keys we accept but wslc cannot enforce (yet)
 UNSUPPORTED_KEYS = {
@@ -177,8 +184,8 @@ def _scalar(value) -> str:
     return str(value)
 
 
-def find_compose_file(directory: str) -> Optional[str]:
-    for name in COMPOSE_FILENAMES:
+def find_compose_file(directory: str, names: Tuple[str, ...] = COMPOSE_FILENAMES) -> Optional[str]:
+    for name in names:
         path = os.path.join(directory, name)
         if os.path.isfile(path):
             return path

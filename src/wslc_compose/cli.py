@@ -29,7 +29,12 @@ from wslc_compose import (
     networking,
 )
 from wslc_compose.engine import WslcError
-from wslc_compose.loader import ComposeError, find_compose_file, load_project
+from wslc_compose.loader import (
+    OVERRIDE_FILENAMES,
+    ComposeError,
+    find_compose_file,
+    load_project,
+)
 from wslc_compose.metadata import resource_labels
 from wslc_compose.model import Project, Service, local_config_digest
 
@@ -72,7 +77,8 @@ def _locate_compose_files(explicit: Optional[List[str]]) -> List[str]:
     while True:
         found = find_compose_file(directory)
         if found:
-            return [found]
+            override = find_compose_file(directory, OVERRIDE_FILENAMES)
+            return [found, override] if override else [found]
         parent = os.path.dirname(directory)
         if parent == directory:
             raise ComposeError(
@@ -734,7 +740,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "-f", "--file", action="append",
-        help="compose file; repeat to overlay several (default: auto-detect, or $COMPOSE_FILE)",
+        help="compose file; repeat to overlay several (default: auto-detect + compose.override.yaml, or $COMPOSE_FILE)",
     )
     parser.add_argument("-p", "--project-name", help="project name (default: directory name)")
     parser.add_argument("--env-file", help="alternate .env file")
