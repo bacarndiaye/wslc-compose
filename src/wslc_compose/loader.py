@@ -708,7 +708,7 @@ def _read_compose(path: str, stack: Tuple[str, ...] = ()) -> dict:
 
     Relative paths inside included files are resolved against the included file's own
     directory (as with Docker Compose). The same service/network/volume name defined in two
-    files is an error.
+    files must have identical definitions, otherwise it is an error.
     """
     path = os.path.abspath(path)
     if path in stack:
@@ -741,7 +741,7 @@ def _read_compose(path: str, stack: Tuple[str, ...] = ()) -> dict:
                 if target is None:
                     target = raw[section] = {}
                 for key, value in items.items():
-                    if key in target:
+                    if key in target and target[key] != value:
                         raise ComposeError(
                             f"{path}: {section[:-1]} {key!r} from {rel} conflicts with an "
                             "existing definition"

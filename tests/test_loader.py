@@ -502,6 +502,54 @@ def test_include_conflict_missing_and_cycle(tmp_path):
         load_project(str(tmp_path / "c1.yaml"))
 
 
+def test_include_accepts_identical_definitions(tmp_path):
+    # PR #58: a network (or service...) declared identically in both files is not a conflict.
+    net = "networks:\n  testnet:\n    driver: bridge\n"
+    _write(
+        tmp_path / "compose.yaml",
+        "include:\n  - svc/web.yaml\nservices:\n  db:\n    image: postgres\n" + net,
+    )
+    _write(
+        tmp_path / "svc" / "web.yaml",
+        "services:\n  web:\n    image: nginx\n  db:\n    image: postgres\n" + net,
+    )
+    project = load_project(str(tmp_path / "compose.yaml"))
+    assert set(project.services) == {"db", "web"}
+    assert set(project.networks) == {"default", "testnet"}
+    assert project.networks["testnet"].driver == "bridge"
+
+
+@pytest.mark.parametrize(
+    "main, included",
+    [
+        ("networks:\n  n:\n    driver: bridge\n", "networks:\n  n:\n    driver: nat\n"),
+        # A key on only one side, in either direction, is a different definition.
+        (
+            "networks:\n  n:\n    driver: bridge\n",
+            "networks:\n  n:\n    driver: bridge\n    internal: true\n",
+        ),
+        (
+            "networks:\n  n:\n    driver: bridge\n    internal: true\n",
+            "networks:\n  n:\n    driver: bridge\n",
+        ),
+        ("networks:\n  n:\n", "networks:\n  n:\n    driver: bridge\n"),
+        (
+            "services:\n  m:\n    image: x\n",
+            "services:\n  m:\n    image: x\n    ports: ['80:80']\n",
+        ),
+        (
+            "services:\n  m:\n    image: x\n    environment: {A: '1'}\n",
+            "services:\n  m:\n    image: x\n    environment: {A: '2'}\n",
+        ),
+    ],
+)
+def test_include_rejects_different_definitions(tmp_path, main, included):
+    _write(tmp_path / "compose.yaml", "include:\n  - a.yaml\n" + main)
+    _write(tmp_path / "a.yaml", included)
+    with pytest.raises(ComposeError, match=r"(network 'n'|service 'm') from a.yaml conflicts"):
+        load_project(str(tmp_path / "compose.yaml"))
+
+
 def _secrets_project(tmp_path, body, files=("tok.txt", "cfg.txt")):
     for name in files:
         (tmp_path / name).write_text("top-secret-value")
@@ -673,6 +721,13 @@ def test_first_file_without_services_is_allowed(tmp_path):
     over = _w(tmp_path / "svc.yaml", "services:\n  app:\n    image: x\n    volumes: ['data:/d']\n")
     project = load_project([base, over])
     assert "app" in project.services and "data" in project.volumes
+
+
+def test_top_level_scalars_in_both_files_take_the_last_value(tmp_path):
+    base = _w(tmp_path / "a.yaml", "version: '3.8'\nname: one\nservices:\n  a:\n    image: x\n")
+    over = _w(tmp_path / "b.yaml", "version: '3.8'\nname: two\nservices:\n  a:\n    image: y\n")
+    project = load_project([base, over])
+    assert project.name == "two" and project.services["a"].image == "y"
 
 
 def test_no_services_anywhere_is_still_an_error(tmp_path):

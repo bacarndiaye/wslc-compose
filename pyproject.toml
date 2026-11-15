@@ -29,6 +29,12 @@ Issues = "https://github.com/bacarndiaye/wslc-compose/issues"
 wslc-compose = "wslc_compose.cli:main"
 wslc = "wslc_compose.shim:main"
 
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+    "pytest-cov>=7.1.0",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/wslc_compose"]
 
