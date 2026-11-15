@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- `include:` accepts a service, network, volume, secret or config defined identically in
+  the including and the included file; differing definitions are still a conflict (#58).
+
 ## 0.6.0 — 2026-11-09
 
 No container is recreated by the upgrade: the shared `config-hash` is unchanged.

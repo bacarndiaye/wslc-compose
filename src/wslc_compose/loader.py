@@ -708,7 +708,7 @@ def _read_compose(path: str, stack: Tuple[str, ...] = ()) -> dict:
 
     Relative paths inside included files are resolved against the included file's own
     directory (as with Docker Compose). The same service/network/volume name defined in two
-    files is an error.
+    files must have identical definitions, otherwise it is an error.
     """
     path = os.path.abspath(path)
     if path in stack:
@@ -740,7 +740,13 @@ def _read_compose(path: str, stack: Tuple[str, ...] = ()) -> dict:
                 target = raw.setdefault(section, {})
                 if target is None:
                     target = raw[section] = {}
-                raw[section] = merge_compose(path, rel, target, items, False)
+                for key, value in items.items():
+                    if key in target and target[key] != value:
+                        raise ComposeError(
+                            f"{path}: {section[:-1]} {key!r} from {rel} conflicts with an "
+                            "existing definition"
+                        )
+                    target[key] = value
     return raw
 
 
@@ -807,7 +813,7 @@ def _merge_dicts(base: dict, over: dict) -> dict:
     return result
 
 
-def merge_compose(path: str, loaded_file: str, base: dict, override: dict, override_values: bool) -> dict:
+def merge_compose(base: dict, override: dict) -> dict:
     """Overlay `override` on `base` like `docker compose -f a.yml -f b.yml`."""
     result = dict(base)
     for key, value in override.items():
@@ -815,7 +821,7 @@ def merge_compose(path: str, loaded_file: str, base: dict, override: dict, overr
             result.pop(key, None)
         elif isinstance(value, _Override):
             result[key] = value.value
-        elif key in result:
+        elif key in ("services", "networks", "volumes", "secrets", "configs") and key in result:
             merged = dict(result[key] or {})
             for name, cfg in (value or {}).items():
                 if isinstance(cfg, _Reset):
@@ -825,13 +831,7 @@ def merge_compose(path: str, loaded_file: str, base: dict, override: dict, overr
                 elif name in merged and isinstance(merged[name], dict) and isinstance(cfg, dict):
                     merged[name] = _merge_dicts(merged[name], cfg)
                 else:
-                    if override_values or merged[name] == cfg:
-                        merged[name] = cfg
-                    else:
-                        raise ComposeError(
-                            f"{path}: {key} {name!r} from {loaded_file} conflicts with an "
-                            "existing definition"
-                        )
+                    merged[name] = cfg
             result[key] = merged
         else:
             result[key] = value
@@ -1000,7 +1000,7 @@ def load_project(
     # keys (a volume's container path...) are compared on their resolved values.
     raw = _interpolated(_read_compose(compose_files[0]), env)
     for extra in compose_files[1:]:
-        raw = merge_compose(compose_files[0], extra, raw, _interpolated(_read_compose(extra), env), True)
+        raw = merge_compose(raw, _interpolated(_read_compose(extra), env))
     raw = _strip_merge_tags(raw)
     if not raw.get("services"):
         where = compose_file if len(compose_files) == 1 else ", ".join(compose_files)
