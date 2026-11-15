@@ -290,6 +290,45 @@ services:
     assert "restart" in text
 
 
+def test_keys_the_loader_does_not_read_are_warned(tmp_path):
+    # Issue #61: every unhandled key is reported, not only a fixed deny-list.
+    (tmp_path / "compose.yaml").write_text(
+        """
+x-common: &common {image: x}
+models: {llm: {model: ai/smollm2}}
+services:
+  a:
+    <<: *common
+    x-note: extensions are not warned
+    privileged: true
+    platform: linux/arm64
+    volumes_from: [b]
+    build:
+      context: .
+      dockerfile_inline: FROM alpine
+    deploy:
+      mode: replicated
+      replicas: 2
+      restart_policy: {condition: on-failure}
+      resources:
+        limits: {cpus: "1", pids: 10}
+        reservations: {memory: 64m, devices: [{capabilities: [gpu]}]}
+  b:
+    image: x
+    deploy: {mode: global, resources: {}}
+"""
+    )
+    warnings = load_project(str(tmp_path / "compose.yaml")).warnings
+    assert warnings == [
+        "top-level 'models' is not supported by wslc-compose (ignoring it)",
+        "a: privileged mode is not supported by wslc (ignoring 'privileged')",
+        "a: not supported by wslc-compose (ignoring 'platform', 'volumes_from', "
+        "'build.dockerfile_inline', 'deploy.restart_policy', 'deploy.resources.limits.pids', "
+        "'deploy.resources.reservations.memory')",
+        "b: not supported by wslc-compose (ignoring 'deploy.mode')",
+    ]
+
+
 @pytest.mark.parametrize(
     ("healthcheck", "test", "disabled"),
     [

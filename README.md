@@ -356,7 +356,10 @@ Show the wslc-compose and wslc versions.
 
 Keys that wslc cannot honor yet are **accepted and reported as a warning** instead of
 failing, so your existing files keep working: `privileged`, `devices`, `sysctls`, `init`,
-`pid`, `ipc`, `read_only`, `security_opt`, `logging`.
+`pid`, `ipc`, `read_only`, `security_opt`, `logging`. Any other key that wslc-compose does
+not read (`platform`, `volumes_from`, `pull_policy`, `build.dockerfile_inline`,
+`deploy.restart_policy`, an unknown top-level section...) is also listed in a warning, so
+nothing is dropped silently; `x-*` extension fields are never reported.
 
 Rejected with an explicit error (no silent surprise): `environment:`/`external:` secrets and
 configs, undefined secret/config references, `build.secrets`, duplicate service/network/volume
