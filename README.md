@@ -227,7 +227,7 @@ Apply to every subcommand and go **before** it: `wslc-compose -f other.yml up -d
 | `-f, --file FILE` | compose file to use; **repeat to overlay several** (later files win, like `docker compose -f a.yml -f b.yml`). Paths may also be joined with `:` (`;` on Windows) or set via `COMPOSE_FILE`. Default: auto-detect in `.` and parent directories, plus `compose.override.yaml` next to the detected file |
 | `-p, --project-name NAME` | project name (default: `name:` key, else directory name) |
 | `--env-file FILE` | alternate `.env` file for interpolation |
-| `--profile NAME` | enable a compose profile (repeatable) |
+| `--profile NAME` | enable a compose profile (repeatable); without it, `COMPOSE_PROFILES` (comma-separated, from the shell or `.env`) is used |
 | `--dry-run` | print every `wslc` command instead of executing it |
 | `--version` | show the wslc-compose version |
 
@@ -302,7 +302,8 @@ Lifecycle of existing project containers, without recreating them.
 
 ### `pull [SERVICE...]`
 
-Pull the images of services that have an `image:` key.
+Pull the images of services that have an `image:` key, except those with `pull_policy: build`
+or `never`.
 
 ### `build [--no-cache] [SERVICE...]`
 
@@ -344,7 +345,8 @@ Show the wslc-compose and wslc versions.
 | `hostname`, `domainname`, `dns`, `dns_search`, `dns_opt` | `-h`, `--domainname`, `--dns*` |
 | `user`, `working_dir` | `-u`, `-w` |
 | `labels` (list & map) | `-l` (merged with the tracking labels below) |
-| `profiles` | service skipped unless its profile is enabled or it is named explicitly |
+| `profiles` | service skipped unless its profile is enabled (`--profile` or `COMPOSE_PROFILES`) or it is named explicitly |
+| `pull_policy` (`missing` / `if_not_present`, `always`, `never`, `build`) | `up`: `always` pulls first, `build` always rebuilds, `never` fails when the image is not local; `pull` skips `build` and `never` services (`daily` / `weekly` / `every_*`: warned, treated as `missing`) |
 | `stdin_open`, `tty` | `-i`, `-t` |
 | `secrets` / `configs` (`file:` source; short & long service syntax) | read-only file mount at `/run/secrets/<name>` (secrets) or `/<name>` (configs), or `target` — see [Secrets and configs](#secrets-and-configs) |
 | `name` (top level) | default project name |

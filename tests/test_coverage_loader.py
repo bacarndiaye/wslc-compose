@@ -177,6 +177,8 @@ def test_labels_list_form(tmp_path):
     ("scale: many", "service 'a': scale must be a number"),
     ("scale: -1", "service 'a': scale cannot be negative"),
     ("scale: 2\n    deploy: {replicas: 3}", "service 'a': 'scale' and 'deploy.replicas' have distinct"),
+    ("pull_policy: sometimes", "service 'a': pull_policy must be one of always, never, missing, build"),
+    ("pull_policy: build", "service 'a': pull_policy 'build' needs a 'build' section"),
     ("deploy: {restart_policy: any}", "service 'a': deploy.restart_policy must be a mapping"),
     ("deploy: {restart_policy: {condition: sometimes}}",
      "service 'a': deploy.restart_policy.condition must be one of none, any, on-failure"),

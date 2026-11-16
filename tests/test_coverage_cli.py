@@ -98,6 +98,10 @@ def test_select_services_honours_profiles():
     assert sorted(s.name for s in cli._select_services(project, [], ["dev"])) == ["debug", "web"]
     # naming a service explicitly enables it regardless of its profiles
     assert [s.name for s in cli._select_services(project, ["debug"], [])] == ["debug"]
+    # issue #60: COMPOSE_PROFILES (project.profiles) applies unless --profile is given
+    project.profiles = ["dev"]
+    assert sorted(s.name for s in cli._select_services(project, [], [])) == ["debug", "web"]
+    assert [s.name for s in cli._select_services(project, [], ["other"])] == ["web"]
 
 
 # --- container queries -----------------------------------------------------------
@@ -363,6 +367,38 @@ def test_up_builds_when_asked_or_image_missing(monkeypatch, tmp_path, capsys, fl
     else:
         assert builds == []
     assert probed == ([] if flag else ["demo-app"])
+
+
+@pytest.mark.parametrize("policy, build, flag, present, expected", [
+    # issue #64
+    ("build", True, [], True, ["build"]),        # always rebuilt, even when present
+    ("always", False, [], True, ["pull"]),       # always pulled, even when present
+    ("always", True, ["--build"], True, ["build"]),  # --build wins
+    ("never", False, [], True, []),
+    ("never", True, [], False, ["build"]),       # never pulls, but may still build
+    ("missing", False, [], False, []),          # wslc run pulls it, as before
+])
+def test_up_honours_pull_policy(monkeypatch, tmp_path, policy, build, flag, present, expected):
+    svc = Service(name="app", image="org/app", pull_policy=policy,
+                  build=BuildConfig(context=str(tmp_path)) if build else None)
+    project = Project(name="demo", directory=str(tmp_path), services={"app": svc})
+    calls = _fake_engine(monkeypatch, project)
+    monkeypatch.setattr(cli.engine, "image_exists", lambda name: present)
+
+    assert cli.cmd_up(_up_ns("-d", *flag)) == 0
+    assert [args[0] for _, args, _ in calls if args[0] in ("build", "pull")] == expected
+    if expected == ["pull"]:
+        assert calls[0][1] == ["pull", "org/app"]
+
+
+def test_up_pull_policy_never_without_a_local_image_is_an_error(monkeypatch):
+    project = Project(name="demo", directory=".", services={
+        "app": Service(name="app", image="org/app", pull_policy="never")})
+    calls = _fake_engine(monkeypatch, project)
+    monkeypatch.setattr(cli.engine, "image_exists", lambda name: False)
+    with pytest.raises(ComposeError, match="'org/app' is not present locally and pull_policy is 'never'"):
+        cli.cmd_up(_up_ns("-d"))
+    assert calls == []
 
 
 def test_up_recreates_a_stopped_outdated_container_without_stopping_it(monkeypatch, capsys):
@@ -722,6 +758,24 @@ def test_pull_only_services_with_an_image(monkeypatch, capsys):
     assert cli.main(["--dry-run", "pull"]) == 0
     assert calls == [(["pull", "nginx"], {"dry_run": True})]
     assert capsys.readouterr().out == "Pulling nginx ...\n"
+
+
+def test_pull_skips_build_and_never_policies(monkeypatch, capsys):
+    project = Project(name="demo", directory=".", services={
+        "web": Service(name="web", image="nginx", pull_policy="always"),
+        "app": Service(name="app", image="org/app", pull_policy="build",
+                       build=BuildConfig(context=".")),
+        "db": Service(name="db", image="postgres", pull_policy="never"),
+    })
+    calls = []
+    monkeypatch.setattr(cli, "_load", lambda _: project)
+    monkeypatch.setattr(cli.engine, "run", lambda args, **kw: calls.append(args))
+
+    assert cli.main(["pull"]) == 0
+    assert calls == [["pull", "nginx"]]
+    out = capsys.readouterr().out
+    assert "Skipping app: pull_policy is 'build'" in out
+    assert "Skipping db: pull_policy is 'never'" in out
 
 
 def test_build_only_services_with_a_build_section(monkeypatch, tmp_path, capsys):

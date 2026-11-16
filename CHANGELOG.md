@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+- `COMPOSE_PROFILES` (comma-separated, from the shell or `.env`) enables profiles when no
+  `--profile` is given (#60).
+- `pull_policy`: `always` pulls on every `up`, `build` always rebuilds, `never` refuses to
+  start without a local image, `missing` / `if_not_present` keep the current behaviour;
+  `pull` skips `build` and `never` services. `daily` / `weekly` / `every_*` are warned and
+  treated as `missing` (#64).
+
 ### Fixed
 - Without `-f` / `COMPOSE_FILE`, `compose.override.yaml` (or `.yml`, `docker-compose.override.*`)
   next to the auto-detected file is overlaid on it, as Docker Compose does (#59). A project

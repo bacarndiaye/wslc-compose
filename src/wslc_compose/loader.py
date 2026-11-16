@@ -63,7 +63,7 @@ _SERVICE_KEYS = frozenset(
      "hostname", "domainname", "dns", "dns_search", "dns_opt", "user", "working_dir", "labels",
      "stop_signal", "stop_grace_period", "shm_size", "stdin_open", "tty", "secrets", "configs",
      "healthcheck", "extra_hosts", "profiles", "restart", "cap_add", "cap_drop", "ulimits",
-     "mem_limit", "cpus", "deploy", "gpus", "scale"}
+     "mem_limit", "cpus", "deploy", "gpus", "scale", "pull_policy"}
 ) | frozenset(UNSUPPORTED_KEYS)
 _BUILD_KEYS = frozenset({"context", "dockerfile", "args", "target", "pull", "no_cache"})
 
@@ -663,6 +663,29 @@ def _restart(svc_name: str, cfg: dict, deploy: dict) -> Optional[str]:
     return restart
 
 
+_PULL_POLICIES = ("always", "never", "missing", "build")
+
+
+def _pull_policy(svc_name: str, value, has_build: bool, warnings: List[str]) -> Optional[str]:
+    if value is None:
+        return None
+    policy = str(value)
+    if policy == "if_not_present":  # older spelling of `missing`
+        policy = "missing"
+    elif policy in ("daily", "weekly") or policy.startswith("every_"):
+        warnings.append(f"{svc_name}: pull_policy {policy!r} is not supported by wslc-compose; "
+                        "using 'missing'")
+        policy = "missing"
+    if policy not in _PULL_POLICIES:
+        raise ComposeError(
+            f"service {svc_name!r}: pull_policy must be one of {', '.join(_PULL_POLICIES)}, "
+            f"got {policy!r}"
+        )
+    if policy == "build" and not has_build:
+        raise ComposeError(f"service {svc_name!r}: pull_policy 'build' needs a 'build' section")
+    return policy
+
+
 def _parse_build(value, project_dir: str) -> BuildConfig:
     if isinstance(value, str):
         return BuildConfig(context=_resolve_bind_source(value, project_dir))
@@ -1113,6 +1136,10 @@ def load_project(
         compose_files=compose_files,
         env_file=os.path.abspath(env_file) if env_file else None,
     )
+    project.profiles = [
+        profile.strip() for profile in str(env.get("COMPOSE_PROFILES") or "").split(",")
+        if profile.strip()
+    ]
     for key in _ignored_keys(raw, _TOP_LEVEL_KEYS):
         project.warnings.append(f"top-level '{key}' is not supported by wslc-compose (ignoring it)")
 
@@ -1157,6 +1184,8 @@ def load_project(
             svc.build = _parse_build(cfg["build"], project_dir)
         if not svc.image and not svc.build:
             raise ComposeError(f"service {svc_name!r} needs 'image' or 'build'")
+        svc.pull_policy = _pull_policy(
+            svc_name, cfg.get("pull_policy"), svc.build is not None, project.warnings)
 
         svc.command = _as_command(cfg.get("command"))
         svc.entrypoint = _as_command(cfg.get("entrypoint"))
