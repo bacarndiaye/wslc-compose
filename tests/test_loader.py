@@ -626,6 +626,37 @@ configs:
     assert "top-secret-value" not in repr(project)
 
 
+def test_build_secrets_are_passed_to_wslc_build(tmp_path):
+    # wslc 3.0.5 has `build --secret id=...,type=file,src=...` (checked on a real build).
+    from wslc_compose import flags
+
+    path = _secrets_project(
+        tmp_path,
+        """
+services:
+  app:
+    build:
+      context: .
+      secrets:
+        - tok
+        - source: tok
+          target: npm_token
+          mode: 0400
+secrets:
+  tok:
+    file: ./tok.txt
+""",
+    )
+    project = load_project(path)
+    args = flags.build_args(project, project.services["app"], path_mapper=lambda p: f"WIN({p})")
+    src = f"WIN({tmp_path / 'tok.txt'})"
+    assert args[args.index("--secret") + 1] == f"id=tok,type=file,src={src}"
+    assert f"id=npm_token,type=file,src={src}" in args
+    assert project.warnings == [
+        "app: build secret 'tok': mode cannot be set by 'wslc build --secret' and will be ignored"]
+    assert "top-secret-value" not in " ".join(args)
+
+
 def test_secret_and_config_with_same_key_use_their_own_files(tmp_path):
     from wslc_compose import flags
 
@@ -677,7 +708,11 @@ def test_unsupported_or_broken_secret_definitions(tmp_path, definition, message)
         ("secrets: [tok, {source: tok, target: tok}]", "multiple secrets target"),
         ("secrets: [{source: tok, target: a/b}]", "invalid target"),
         ("secrets: [tok]\n    volumes: ['data:/run/secrets/tok']", "volume"),
-        ("build: {context: ., secrets: [tok]}", "build.secrets is not supported"),
+        ("build: {context: ., secrets: [nope]}", "undefined secret 'nope' in build.secrets"),
+        ("build: {context: ., secrets: tok}", "build.secrets: expected a list"),
+        ("build: {context: ., secrets: [{target: x}]}", "build.secrets entries require a source"),
+        ("build: {context: ., secrets: [{source: tok, target: 'a,b'}]}", "invalid secret id 'a,b'"),
+        ("build: {context: ., secrets: [tok, {source: tok, target: tok}]}", "'tok' is used twice"),
     ],
 )
 def test_service_secret_reference_errors(tmp_path, service_body, message):

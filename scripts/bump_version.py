@@ -5,7 +5,8 @@
     python scripts/bump_version.py --check   # fail if a doc pin differs from pyproject.toml
 
 Touched files: pyproject.toml, src/wslc_compose/__init__.py, README.md,
-docs/MIGRATION.md, docs/index.html and a CHANGELOG.md heading for the new version.
+docs/MIGRATION.md, docs/index.html and the CHANGELOG.md heading for the new version (the
+``## Unreleased`` section is renamed; without one an empty section is added).
 install.sh / install.ps1 stay on ``wslc-compose==0.*`` on purpose.
 """
 
@@ -74,6 +75,14 @@ def problems(expected: str) -> list:
     return found
 
 
+def changelog_with_heading(changelog: str, new: str, today: str) -> str:
+    """`changelog` with a `## new — today` heading: `## Unreleased` is renamed when present."""
+    heading = f"## {new} — {today}"
+    if "\n## Unreleased\n" in changelog:
+        return changelog.replace("\n## Unreleased\n", f"\n{heading}\n", 1)
+    return changelog.replace("# Changelog\n\n", f"# Changelog\n\n{heading}\n\n### Added\n- \n\n", 1)
+
+
 def bump(new: str) -> None:
     if not re.fullmatch(VERSION, new):
         raise SystemExit(f"invalid version {new!r} (expected X.Y.Z)")
@@ -82,10 +91,11 @@ def bump(new: str) -> None:
             raise SystemExit(f"{path.relative_to(ROOT)}: pattern not found: {pattern}")
     changelog = CHANGELOG.read_text(encoding="utf-8")
     if f"## {new} " not in changelog:
-        heading = f"## {new} — {datetime.date.today().isoformat()}\n\n### Added\n- \n\n"
-        CHANGELOG.write_text(changelog.replace("# Changelog\n\n", "# Changelog\n\n" + heading, 1),
-                             encoding="utf-8")
-        print(f"CHANGELOG.md: added a '## {new}' section — fill it in")
+        renamed = "\n## Unreleased\n" in changelog
+        changelog = changelog_with_heading(changelog, new, datetime.date.today().isoformat())
+        CHANGELOG.write_text(changelog, encoding="utf-8")
+        print(f"CHANGELOG.md: renamed '## Unreleased' to '## {new}'" if renamed
+              else f"CHANGELOG.md: added a '## {new}' section — fill it in")
     print(f"bumped to {new}")
 
 

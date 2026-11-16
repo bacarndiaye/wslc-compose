@@ -324,7 +324,7 @@ Show the wslc-compose and wslc versions.
 | Compose key | Mapping to wslc |
 |---|---|
 | `image` | `wslc run <image>` / `wslc pull` |
-| `build` (`context`, `dockerfile` or `dockerfile_inline`, `args`, `labels`, `target`, `pull`, `no_cache`) | `wslc build -t <project>-<service>` (`dockerfile_inline` is written to a private temporary file passed with `-f`; labels → `-l`) |
+| `build` (`context`, `dockerfile` or `dockerfile_inline`, `args`, `labels`, `secrets`, `target`, `pull`, `no_cache`) | `wslc build -t <project>-<service>` (`dockerfile_inline` is written to a private temporary file passed with `-f`; labels → `-l`; secrets → `--secret id=<target>,type=file,src=<file>`) |
 | `command`, `entrypoint` (string or list; `[]` clears the image's value) | trailing args / `--entrypoint` (`entrypoint: []` → `--entrypoint ""`; `command: []` restates the image ENTRYPOINT without its CMD) |
 | `container_name` | `--name` (disables scaling for that service) |
 | `environment` (list & map; `FOO` without a value is taken from the shell / `.env`) | `-e` |
@@ -364,7 +364,7 @@ not read (`platform`, `volumes_from`, `pull_policy`, `build.dockerfile_inline`,
 nothing is dropped silently; `x-*` extension fields are never reported.
 
 Rejected with an explicit error (no silent surprise): `environment:`/`external:` secrets and
-configs, undefined secret/config references, `build.secrets`, Git/URL build contexts (`wslc build`
+configs, undefined secret/config references (also in `build.secrets`), Git/URL build contexts (`wslc build`
 only takes a local directory), `dockerfile` together with `dockerfile_inline`, duplicate service/network/volume
 names across `include`d files, circular or missing includes, anonymous volumes
 (`- /data`, or a long-syntax `type: volume` without `source`), a bind mount without `source`, references to undeclared networks/volumes, circular
@@ -454,8 +454,10 @@ Boundaries:
 - Only `file:` sources are supported; `environment:`, `content:` and `external:` fail with a
   clear error.
 - `uid`, `gid` and `mode` are accepted with a warning: wslc bind mounts cannot enforce them.
-- `build.secrets` fails clearly — `wslc build` has no `--secret` option. Do not replace it
-  with `build.args`; run the credentialed step in a runtime container instead.
+- `build.secrets` (short syntax, or `source` / `target`) reach `wslc build --secret
+  id=<target>,type=file,src=<file>` (wslc ≥ 3.0.5); read them in the Dockerfile with
+  `RUN --mount=type=secret,id=<target>`. Only file-backed secrets work, and `uid` / `gid` /
+  `mode` are warned and ignored.
 - Every secret/config is a bind mount and counts toward the wslc session mount limit.
 
 ### Multiple compose files
