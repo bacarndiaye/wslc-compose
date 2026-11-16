@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 — 2026-11-16
+
+The shared `config-hash` formula is unchanged. Only services whose effective settings change
+are recreated on the next `up`: those of a project with a `compose.override.yaml`, services
+relying on `deploy.restart_policy`, and those using a legacy `external: {name: ...}` resource.
 
 ### Added
 - `COMPOSE_PROFILES` (comma-separated, from the shell or `.env`) enables profiles when no
