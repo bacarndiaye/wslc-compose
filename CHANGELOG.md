@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.1 — 2026-11-16
 
 ### Added
 - `build.secrets` (file-backed, short syntax or `source` / `target`) are passed to
