@@ -9,6 +9,8 @@
   start without a local image, `missing` / `if_not_present` keep the current behaviour;
   `pull` skips `build` and `never` services. `daily` / `weekly` / `every_*` are warned and
   treated as `missing` (#64).
+- `build.dockerfile_inline` (written to a private temporary file passed with `-f`) and
+  `build.labels` (`-l`) (#65).
 
 ### Fixed
 - Without `-f` / `COMPOSE_FILE`, `compose.override.yaml` (or `.yml`, `docker-compose.override.*`)
@@ -22,6 +24,16 @@
 - Without `restart:`, `deploy.restart_policy.condition` is applied (`any`, the default, →
   `always`; `none` → `no`; `on-failure` is warned as unsupported by wslc) (#63). Such services
   are recreated on the next `up` to get the policy.
+- A Git/URL `build.context` is rejected with a clear error instead of being turned into a
+  local path; `dockerfile` with `dockerfile_inline` is an error (#65).
+- A long-syntax `type: volume` without `source` gets the "anonymous volumes are not
+  supported" error instead of `undefined volume None`; a bind mount without `source` is an
+  error (#66).
+- The legacy `external: {name: x}` of volumes and networks uses `x` as the resource name
+  (with a deprecation warning) instead of the key; a list or mapping is no longer accepted as
+  a boolean elsewhere (#67).
+- `healthcheck.start_interval` (no wslc flag) is reported as ignored; a long-syntax
+  `published` port range follows the short-syntax rules instead of being passed as is (#68).
 - `include:` accepts a service, network, volume, secret or config defined identically in
   the including and the included file; differing definitions are still a conflict (#58).
 

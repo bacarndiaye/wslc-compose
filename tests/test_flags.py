@@ -295,6 +295,31 @@ def test_build_args(tmp_path):
     assert args[-1] == f"WIN({tmp_path / 'src'})"
 
 
+def test_build_args_inline_dockerfile_and_labels(tmp_path, monkeypatch):
+    # Issue #65: dockerfile_inline is written to a private file passed with -f.
+    from wslc_compose import flags
+
+    monkeypatch.setattr(flags, "_PRIVATE_DIR", [str(tmp_path)])
+    (tmp_path / "compose.yaml").write_text("""
+services:
+  app:
+    build:
+      context: .
+      dockerfile_inline: |
+        FROM alpine
+        RUN echo hi
+      labels: [team=a, tier]
+""")
+    project = load_project(str(tmp_path / "compose.yaml"))
+    args = build_args(project, project.services["app"], path_mapper=lambda p: f"WIN({p})")
+    dockerfile = args[args.index("-f") + 1]
+    assert dockerfile.startswith(f"WIN({tmp_path}") and "Dockerfile-" in dockerfile
+    with open(dockerfile[4:-1], encoding="utf-8") as handle:
+        assert handle.read() == "FROM alpine\nRUN echo hi\n"
+    assert args[args.index("-l"):args.index("-l") + 4] == ["-l", "team=a", "-l", "tier="]
+    assert project.warnings == []
+
+
 def _service_with_runtime_options():
     service = Service(name="web", image="x", restart="always", cap_add=["NET_ADMIN", "SYS_TIME"], cap_drop=["MKNOD"])
     return Project(name="demo", directory=".", services={"web": service}), service
@@ -425,17 +450,17 @@ def test_env_file_compose_syntax_is_normalized_for_wslc(tmp_path, monkeypatch):
     import os
 
     from wslc_compose import flags
-    monkeypatch.setattr(flags, "_ENV_DIR", [])
+    monkeypatch.setattr(flags, "_PRIVATE_DIR", [])
     registered = []
     monkeypatch.setattr(flags.atexit, "register", lambda *a: registered.append(a))
     monkeypatch.setenv("WHO", "bob")
     fancy = tmp_path / "fancy.env"
     fancy.write_text("export E=exported\nQ=\"quoted\"\nC=val # comment\nS='single $x'\nH=${WHO}\nBARE\n")
     copy = flags.wslc_env_file(str(fancy))
-    assert copy != str(fancy) and os.path.dirname(copy) == flags._ENV_DIR[0]
+    assert copy != str(fancy) and os.path.dirname(copy) == flags._PRIVATE_DIR[0]
     with open(copy, encoding="utf-8") as handle:
         assert handle.read() == "E=exported\nQ=quoted\nC=val\nS=single $x\nH=bob\nBARE\n"
-    assert registered and registered[0][1] == flags._ENV_DIR[0]  # removed at exit
+    assert registered and registered[0][1] == flags._PRIVATE_DIR[0]  # removed at exit
     assert flags.wslc_env_file(str(fancy)) == copy  # same private directory is reused
     assert len(registered) == 1
 

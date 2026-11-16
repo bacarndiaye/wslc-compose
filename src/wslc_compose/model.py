@@ -50,6 +50,8 @@ class BuildConfig:
     target: Optional[str] = None
     pull: bool = False
     no_cache: bool = False
+    dockerfile_inline: Optional[str] = None
+    labels: Dict[str, str] = field(default_factory=dict)
 
 
 @dataclass

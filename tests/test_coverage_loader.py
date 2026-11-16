@@ -179,6 +179,16 @@ def test_labels_list_form(tmp_path):
     ("scale: 2\n    deploy: {replicas: 3}", "service 'a': 'scale' and 'deploy.replicas' have distinct"),
     ("pull_policy: sometimes", "service 'a': pull_policy must be one of always, never, missing, build"),
     ("pull_policy: build", "service 'a': pull_policy 'build' needs a 'build' section"),
+    # issue #65
+    ("build: https://github.com/org/repo.git", "Git/URL contexts are not supported"),
+    ("build: {context: 'git@github.com:org/repo.git'}", "Git/URL contexts are not supported"),
+    ("build: {context: 'ssh://host/repo'}", "Git/URL contexts are not supported"),
+    ("build: {context: ., dockerfile: D, dockerfile_inline: FROM x}",
+     "'dockerfile' and 'dockerfile_inline' are mutually exclusive"),
+    # issue #66
+    ("volumes: [{type: volume, target: /data}]", "anonymous volumes are not supported by wslc"),
+    ("volumes: [{type: bind, target: /data}]", "bind mount needs a source"),
+    ("tty: [true]", "tty: expected a boolean"),
     ("deploy: {restart_policy: any}", "service 'a': deploy.restart_policy must be a mapping"),
     ("deploy: {restart_policy: {condition: sometimes}}",
      "service 'a': deploy.restart_policy.condition must be one of none, any, on-failure"),

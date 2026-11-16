@@ -305,7 +305,7 @@ services:
     volumes_from: [b]
     build:
       context: .
-      dockerfile_inline: FROM alpine
+      cache_from: [x]
     deploy:
       mode: replicated
       replicas: 2
@@ -323,7 +323,7 @@ services:
         "top-level 'models' is not supported by wslc-compose (ignoring it)",
         "a: privileged mode is not supported by wslc (ignoring 'privileged')",
         "a: not supported by wslc-compose (ignoring 'platform', 'volumes_from', "
-        "'build.dockerfile_inline', 'deploy.restart_policy.delay', "
+        "'build.cache_from', 'deploy.restart_policy.delay', "
         "'deploy.resources.limits.pids', 'deploy.resources.reservations.memory')",
         "b: not supported by wslc-compose (ignoring 'deploy.mode')",
     ]
@@ -951,6 +951,61 @@ networks:
     name: shared
 """)
     assert project.networks["n"].external is True
+
+
+@pytest.mark.parametrize("section", ["networks", "volumes"])
+def test_legacy_external_name_is_the_resource_name(tmp_path, section):
+    # Issue #67: `external: {name: x}` means `external: true` + `name: x`.
+    use = "networks: [shr]" if section == "networks" else "volumes: ['shr:/data']"
+    project = _one(tmp_path, f"""
+services:
+  a: {{image: alpine, {use}}}
+{section}:
+  shr:
+    external: {{name: shared}}
+""")
+    resource = getattr(project, section)["shr"]
+    assert resource.external is True and resource.name == "shared"
+    assert project.warnings == [f"{section}.shr: 'external: {{name: ...}}' is deprecated, use "
+                                "'name:' with 'external: true'"]
+
+
+def test_legacy_external_name_conflicts(tmp_path):
+    with pytest.raises(ComposeError, match="volumes.n: 'name' and 'external.name' differ"):
+        _one(tmp_path, "services:\n  a: {image: alpine}\n"
+                       "volumes:\n  n:\n    name: one\n    external: {name: two}\n")
+    project = _one(tmp_path, "services:\n  a: {image: alpine}\nvolumes:\n  n:\n    external: {}\n")
+    assert project.volumes["n"].external is True and project.volumes["n"].name == "n"
+
+
+def test_legacy_external_secret_is_still_rejected(tmp_path):
+    with pytest.raises(ComposeError, match="external secrets are not supported"):
+        _one(tmp_path, "services:\n  a: {image: alpine}\n"
+                       "secrets:\n  s:\n    external: {name: vault}\n")
+
+
+def test_healthcheck_start_interval_is_warned(tmp_path):
+    # Issue #68: wslc run has no --health-start-interval.
+    project = _one(tmp_path, "services:\n  a:\n    image: alpine\n"
+                             "    healthcheck: {test: [CMD, 'true'], start_interval: 5s}\n")
+    assert project.warnings == [
+        "a: not supported by wslc-compose (ignoring 'healthcheck.start_interval')"]
+
+
+@pytest.mark.parametrize("spec, flags", [
+    # Issue #68: a long-syntax published range follows the short-syntax rules.
+    ({"target": 80, "published": "8080-8080"}, ["8080:80"]),
+    ({"target": 80, "published": "8080-8080", "host_ip": "127.0.0.1", "protocol": "udp"},
+     ["127.0.0.1:8080:80/udp"]),
+    ({"target": 80, "published": "8080-8080", "host_ip": "::1"}, ["[::1]:8080:80"]),
+])
+def test_long_syntax_published_range(spec, flags):
+    assert [p.to_flag() for p in parse_port(spec)] == flags
+
+
+def test_long_syntax_published_range_mismatch():
+    with pytest.raises(ComposeError, match="port range mismatch"):
+        parse_port({"target": 80, "published": "8000-8005"})
 
 
 def test_yaml_booleans_are_written_like_compose(tmp_path):
