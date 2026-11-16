@@ -176,15 +176,25 @@ def run_args(
     return args
 
 
-_ENV_DIR: List[str] = []
+_PRIVATE_DIR: List[str] = []
 
 
-def _private_env_dir() -> str:
-    if not _ENV_DIR:
-        directory = tempfile.mkdtemp(prefix="wslc-compose-env-")  # mode 0700
+def _private_dir() -> str:
+    """A private temporary directory (mode 0700), removed at exit."""
+    if not _PRIVATE_DIR:
+        directory = tempfile.mkdtemp(prefix="wslc-compose-")
         atexit.register(shutil.rmtree, directory, True)
-        _ENV_DIR.append(directory)
-    return _ENV_DIR[0]
+        _PRIVATE_DIR.append(directory)
+    return _PRIVATE_DIR[0]
+
+
+def _inline_dockerfile(content: str) -> str:
+    """`build.dockerfile_inline` written to a file, since `wslc build -f` takes a path."""
+    digest = hashlib.sha256(content.encode()).hexdigest()[:12]
+    path = os.path.join(_private_dir(), f"Dockerfile-{digest}")
+    with open(path, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(content)
+    return path
 
 
 def wslc_env_file(path: str) -> str:
@@ -207,7 +217,7 @@ def wslc_env_file(path: str) -> str:
     if lines == [line for line in raw if line and not line.startswith("#")]:
         return path
     digest = hashlib.sha256(path.encode()).hexdigest()[:12]
-    copy = os.path.join(_private_env_dir(), f"{digest}-{os.path.basename(path)}")
+    copy = os.path.join(_private_dir(), f"{digest}-{os.path.basename(path)}")
     with open(copy, "w", encoding="utf-8", newline="\n") as handle:
         handle.write("".join(line + "\n" for line in lines))
     return copy
@@ -235,7 +245,9 @@ def build_args(
     mapper = path_mapper or (lambda p: p)
     build = service.build
     args: List[str] = ["build", "-t", image_name(project, service)]
-    if build.dockerfile:
+    if build.dockerfile_inline is not None:
+        args += ["-f", mapper(_inline_dockerfile(build.dockerfile_inline))]
+    elif build.dockerfile:
         # wslc resolves -f against its own cwd, not the build context: pass the
         # dockerfile as an absolute path run through the same mapper as the context
         dockerfile = build.dockerfile
@@ -244,6 +256,8 @@ def build_args(
         args += ["-f", mapper(dockerfile)]
     for key, value in build.args.items():
         args += ["--build-arg", f"{key}={value}"]
+    for key, value in build.labels.items():
+        args += ["-l", f"{key}={value}"]
     if build.target:
         args += ["--target", build.target]
     if build.pull:

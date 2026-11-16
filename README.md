@@ -324,20 +324,20 @@ Show the wslc-compose and wslc versions.
 | Compose key | Mapping to wslc |
 |---|---|
 | `image` | `wslc run <image>` / `wslc pull` |
-| `build` (`context`, `dockerfile`, `args`, `target`, `pull`) | `wslc build -t <project>-<service>` |
+| `build` (`context`, `dockerfile` or `dockerfile_inline`, `args`, `labels`, `target`, `pull`, `no_cache`) | `wslc build -t <project>-<service>` (`dockerfile_inline` is written to a private temporary file passed with `-f`; labels → `-l`) |
 | `command`, `entrypoint` (string or list; `[]` clears the image's value) | trailing args / `--entrypoint` (`entrypoint: []` → `--entrypoint ""`; `command: []` restates the image ENTRYPOINT without its CMD) |
 | `container_name` | `--name` (disables scaling for that service) |
 | `environment` (list & map; `FOO` without a value is taken from the shell / `.env`) | `-e` |
 | `env_file` (path, list, or `{path, required: false}`; `.env` syntax: `export`, quotes, `# comments`, `${VAR}`) | `--env-file` (a normalized private copy when the file uses syntax wslc reads literally) |
-| `ports` (short & long syntax, `ip:host:container`, `ip::container`, `[::1]:host:container`, `/udp`, ranges `8000-8005`) | `-p` |
+| `ports` (short & long syntax, `ip:host:container`, `ip::container`, `[::1]:host:container`, `/udp`, ranges `8000-8005` in both syntaxes) | `-p` |
 | `volumes` — named volumes | `wslc volume create` + `-v name:/path` |
 | `volumes` — bind mounts (`./rel`, `.\rel`, `/abs`, `~`, `E:\win\path`), `:ro` | `-v` with [path translation](#volumes-and-path-translation) |
 | `volumes` long syntax options: `tmpfs.size` / `tmpfs.mode`, `bind.recursive` | `--mount ...,tmpfs-size=`, `tmpfs-mode=`, `bind-recursive=` (`bind.propagation`, `bind.selinux`, `volume.nocopy`, `volume.subpath` are not supported by wslc: warned, ignored) |
 | `tmpfs` (top-level list or `type: tmpfs`) | `--tmpfs` |
-| Multiple `networks`, per-endpoint `aliases` / `ipv4_address`, `external: true`, custom `name:` | Native `create`, `network connect`, `start`; one-network services use `run` |
+| Multiple `networks`, per-endpoint `aliases` / `ipv4_address`, `external: true` (legacy `external: {name: x}` is read as `name: x` + `external: true`, with a deprecation warning, for volumes too), custom `name:` | Native `create`, `network connect`, `start`; one-network services use `run` |
 | Network `driver`, `driver_opts`, `labels`, `internal`, IPv4 IPAM `subnet` / `gateway` / `ip_range` | `network create --driver --opt --internal --subnet --gateway --ip-range` |
 | `depends_on` (list & map) | topological start/creation order; `condition: service_healthy` and `service_completed_successfully` are honored (see [Waiting for dependencies](#waiting-for-dependencies)) |
-| `healthcheck` (`test` as `CMD` / `CMD-SHELL` / `NONE`, `interval`, `timeout`, `start_period`, `retries`, `disable`; without `test` the options tune the image's own healthcheck) | `--health-cmd`, `--health-interval`, `--health-timeout`, `--health-start-period`, `--health-retries`, `--no-healthcheck` — the status shows in `ps` as `(healthy)` / `(unhealthy)` |
+| `healthcheck` (`test` as `CMD` / `CMD-SHELL` / `NONE`, `interval`, `timeout`, `start_period`, `retries`, `disable`; without `test` the options tune the image's own healthcheck; `start_interval` has no wslc flag: warned, ignored) | `--health-cmd`, `--health-interval`, `--health-timeout`, `--health-start-period`, `--health-retries`, `--no-healthcheck` — the status shows in `ps` as `(healthy)` / `(unhealthy)` |
 | `deploy.replicas` (including `0`), legacy service-level `scale` (must match `deploy.replicas` if both are set) | number of containers (see also `--scale`) |
 | `deploy.resources.limits.cpus` / `.memory`, `cpus`, `mem_limit` | `--cpus`, `-m` |
 | `deploy.resources.reservations.devices` (gpu), `gpus` | `--gpus` |
@@ -364,9 +364,10 @@ not read (`platform`, `volumes_from`, `pull_policy`, `build.dockerfile_inline`,
 nothing is dropped silently; `x-*` extension fields are never reported.
 
 Rejected with an explicit error (no silent surprise): `environment:`/`external:` secrets and
-configs, undefined secret/config references, `build.secrets`, duplicate service/network/volume
+configs, undefined secret/config references, `build.secrets`, Git/URL build contexts (`wslc build`
+only takes a local directory), `dockerfile` together with `dockerfile_inline`, duplicate service/network/volume
 names across `include`d files, circular or missing includes, anonymous volumes
-(`- /data` without a source), references to undeclared networks/volumes, circular
+(`- /data`, or a long-syntax `type: volume` without `source`), a bind mount without `source`, references to undeclared networks/volumes, circular
 `depends_on` or `extends`, scaling a service that sets `container_name`, `--scale` for an
 unknown service, invalid YAML, a boolean setting that is not `true`/`false`/`yes`/`no`.
 

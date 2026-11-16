@@ -65,7 +65,11 @@ _SERVICE_KEYS = frozenset(
      "healthcheck", "extra_hosts", "profiles", "restart", "cap_add", "cap_drop", "ulimits",
      "mem_limit", "cpus", "deploy", "gpus", "scale", "pull_policy"}
 ) | frozenset(UNSUPPORTED_KEYS)
-_BUILD_KEYS = frozenset({"context", "dockerfile", "args", "target", "pull", "no_cache"})
+_BUILD_KEYS = frozenset(
+    {"context", "dockerfile", "dockerfile_inline", "args", "labels", "target", "pull", "no_cache"}
+)
+# A Git or URL build context (`https://...`, `git@host:repo`): wslc builds local directories only.
+_REMOTE_CONTEXT_RE = re.compile(r"^(?:[A-Za-z][A-Za-z0-9+.-]+://|git@)")
 
 _WIN_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
@@ -180,8 +184,6 @@ def _as_bool(value, what: str) -> bool:
         return value
     if isinstance(value, (int, float)):
         return value != 0
-    if isinstance(value, (dict, list)):
-        return bool(value)  # legacy `external: {name: ...}`
     if isinstance(value, str):
         text = value.strip().lower()
         if text in _TRUE:
@@ -356,6 +358,11 @@ def parse_port(spec) -> List[PortMapping]:
         published = spec.get("published")
         host_ip = spec.get("host_ip")
         pub = str(published) if published not in (None, "") else None
+        if pub and "-" in pub:  # a host port range: same rules as the short syntax
+            ip = str(host_ip or "")
+            ip = f"[{ip}]" if ":" in ip and not ip.startswith("[") else ip
+            short = f"{ip}:{pub}:{target}" if ip else f"{pub}:{target}"
+            return parse_port(f"{short}/{spec.get('protocol', 'tcp')}")
         if host_ip:
             host_ip = str(host_ip)
             if ":" in host_ip and not host_ip.startswith("["):
@@ -482,6 +489,11 @@ def parse_volume(spec, project_dir: str, warnings: Optional[List[str]] = None) -
         target = spec.get("target")
         if not target:
             raise ComposeError(f"volume entry missing target: {spec!r}")
+        if not source and vtype in ("volume", "bind"):
+            raise ComposeError(
+                f"anonymous volumes are not supported by wslc: {spec!r}; name the volume or "
+                "use a bind mount" if vtype == "volume" else f"bind mount needs a source: {spec!r}"
+            )
         read_only = _as_bool(spec.get("read_only", False), "volumes.read_only")
         if vtype == "bind" and source:
             source = _resolve_bind_source(source, project_dir)
@@ -601,6 +613,9 @@ def _ignored_keys(cfg, handled, prefix: str = "") -> List[str]:
 def _ignored_service_keys(cfg: dict) -> List[str]:
     ignored = _ignored_keys(cfg, _SERVICE_KEYS)
     ignored += _ignored_keys(cfg.get("build"), _BUILD_KEYS, "build.")
+    # start_interval: wslc run has no --health-start-interval (wslc 3.0.5)
+    ignored += _ignored_keys(cfg.get("healthcheck"), {"test", "interval", "timeout",
+                             "start_period", "retries", "disable"}, "healthcheck.")
     deploy = cfg.get("deploy")
     if isinstance(deploy, dict):
         if deploy.get("mode") == "replicated":  # the default: nothing is lost
@@ -686,19 +701,32 @@ def _pull_policy(svc_name: str, value, has_build: bool, warnings: List[str]) -> 
     return policy
 
 
+def _build_context(context, project_dir: str) -> str:
+    if _REMOTE_CONTEXT_RE.match(str(context)):
+        raise ComposeError(
+            f"build.context {context!r}: Git/URL contexts are not supported, 'wslc build' only "
+            "takes a local directory (clone the repository and point 'context' at it)"
+        )
+    return _resolve_bind_source(str(context), project_dir)
+
+
 def _parse_build(value, project_dir: str) -> BuildConfig:
     if isinstance(value, str):
-        return BuildConfig(context=_resolve_bind_source(value, project_dir))
+        return BuildConfig(context=_build_context(value, project_dir))
     if "secrets" in value:
         raise ComposeError(
             "build.secrets is not supported: 'wslc build' has no --secret option "
             "(do not pass credentials as build args)"
         )
-    context = _resolve_bind_source(value.get("context", "."), project_dir)
+    if value.get("dockerfile") and value.get("dockerfile_inline") is not None:
+        raise ComposeError("build: 'dockerfile' and 'dockerfile_inline' are mutually exclusive")
+    inline = value.get("dockerfile_inline")
     return BuildConfig(
-        context=context,
+        context=_build_context(value.get("context", "."), project_dir),
         dockerfile=value.get("dockerfile"),
+        dockerfile_inline=None if inline is None else str(inline),
         args=_as_mapping(value.get("args"), "build.args"),
+        labels=_as_mapping(value.get("labels"), "build.labels"),
         target=value.get("target"),
         pull=_as_bool(value.get("pull", False), "build.pull"),
         no_cache=_as_bool(value.get("no_cache", False), "build.no_cache"),
@@ -1013,7 +1041,8 @@ def _parse_file_resources(kind, value, project_dir: str):
     for key, cfg in value.items():
         if not isinstance(cfg, dict):
             raise ComposeError(f"{label} {key!r}: expected a mapping with a 'file' source")
-        if _as_bool(cfg.get("external"), f"{label} {key!r}: external"):
+        if isinstance(cfg.get("external"), dict) or _as_bool(
+                cfg.get("external"), f"{label} {key!r}: external"):
             raise ComposeError(
                 f"{label} {key!r}: external {kind} are not supported by wslc; use a file"
             )
@@ -1034,12 +1063,28 @@ def _parse_file_resources(kind, value, project_dir: str):
     return result
 
 
-def _parse_network(key: str, cfg, project_name: str) -> Network:
+def _external(cfg: dict, what: str, warnings: List[str]) -> Tuple[bool, Optional[str]]:
+    """`external:` as (external?, name). The legacy `external: {name: x}` is `external: true`
+    with `name: x`, as Docker Compose still reads it."""
+    value = cfg.get("external", False)
+    if not isinstance(value, dict):
+        return _as_bool(value, f"{what}.external"), cfg.get("name")
+    legacy = value.get("name")
+    if legacy is None:
+        return True, cfg.get("name")
+    if cfg.get("name") not in (None, legacy):
+        raise ComposeError(f"{what}: 'name' and 'external.name' differ")
+    warnings.append(f"{what}: 'external: {{name: ...}}' is deprecated, use 'name:' with "
+                    "'external: true'")
+    return True, legacy
+
+
+def _parse_network(key: str, cfg, project_name: str, warnings: List[str]) -> Network:
     cfg = {} if cfg is None else cfg
     if not isinstance(cfg, dict):
         raise ComposeError(f"networks.{key}: expected mapping")
-    external = _as_bool(cfg.get("external", False), f"networks.{key}.external")
-    name = cfg.get("name") or (key if external else f"{project_name}_{key}")
+    external, name = _external(cfg, f"networks.{key}", warnings)
+    name = name or (key if external else f"{project_name}_{key}")
     network = Network(key=key, name=str(name), external=external,
                       internal=_as_bool(cfg.get("internal", False), f"networks.{key}.internal"),
                       driver=cfg.get("driver"),
@@ -1148,13 +1193,13 @@ def load_project(
     if not isinstance(raw_networks, dict):
         raise ComposeError("networks: expected mapping")
     for key, cfg in raw_networks.items():
-        project.networks[key] = _parse_network(str(key), cfg, name)
+        project.networks[key] = _parse_network(str(key), cfg, name, project.warnings)
 
     raw_volumes = raw.get("volumes") or {}
     for key, cfg in raw_volumes.items():
         cfg = cfg or {}
-        external = _as_bool(cfg.get("external", False), f"volumes.{key}.external")
-        vol_name = cfg.get("name") or (key if external else f"{name}_{key}")
+        external, vol_name = _external(cfg, f"volumes.{key}", project.warnings)
+        vol_name = vol_name or (key if external else f"{name}_{key}")
         project.volumes[key] = Volume(key=key, name=vol_name, external=external,
                                       driver=cfg.get("driver"),
                                       driver_opts=_as_mapping(cfg.get("driver_opts"), "driver_opts"),
