@@ -309,7 +309,7 @@ services:
     deploy:
       mode: replicated
       replicas: 2
-      restart_policy: {condition: on-failure}
+      restart_policy: {condition: any, delay: 5s}
       resources:
         limits: {cpus: "1", pids: 10}
         reservations: {memory: 64m, devices: [{capabilities: [gpu]}]}
@@ -323,8 +323,8 @@ services:
         "top-level 'models' is not supported by wslc-compose (ignoring it)",
         "a: privileged mode is not supported by wslc (ignoring 'privileged')",
         "a: not supported by wslc-compose (ignoring 'platform', 'volumes_from', "
-        "'build.dockerfile_inline', 'deploy.restart_policy', 'deploy.resources.limits.pids', "
-        "'deploy.resources.reservations.memory')",
+        "'build.dockerfile_inline', 'deploy.restart_policy.delay', "
+        "'deploy.resources.limits.pids', 'deploy.resources.reservations.memory')",
         "b: not supported by wslc-compose (ignoring 'deploy.mode')",
     ]
 
@@ -1076,6 +1076,33 @@ def test_windows_style_relative_bind(tmp_path):
 def test_deploy_replicas_zero(tmp_path):
     project = _one(tmp_path, "services:\n  a:\n    image: alpine\n    deploy: {replicas: 0}\n")
     assert project.services["a"].replicas == 0
+
+
+@pytest.mark.parametrize("body, replicas", [
+    ("scale: 3", 3),  # issue #62: the legacy service-level key
+    ("scale: 0", 0),
+    ("scale: 2\n    deploy: {replicas: 2}", 2),  # equal values are accepted
+])
+def test_scale(tmp_path, body, replicas):
+    project = _one(tmp_path, f"services:\n  a:\n    image: alpine\n    {body}\n")
+    assert project.services["a"].replicas == replicas
+    assert project.warnings == []
+
+
+@pytest.mark.parametrize("body, restart, warns", [
+    # issue #63: deploy.restart_policy is used when `restart` is absent
+    ("deploy: {restart_policy: {condition: any}}", "always", False),
+    ("deploy: {restart_policy: {}}", "always", False),  # `any` is the default condition
+    ("deploy: {restart_policy: {condition: none}}", "no", False),
+    ("deploy: {restart_policy: {condition: on-failure}}", "on-failure", True),
+    ("deploy: {restart_policy: {condition: on-failure, max_attempts: 3}}", "on-failure:3", True),
+    ("restart: 'no'\n    deploy: {restart_policy: {condition: any, delay: 5s}}", "no", False),
+])
+def test_deploy_restart_policy(tmp_path, body, restart, warns):
+    project = _one(tmp_path, f"services:\n  a:\n    image: alpine\n    {body}\n")
+    assert project.services["a"].restart == restart
+    assert any("restart policy" in w for w in project.warnings) is warns
+    assert not any("deploy." in w for w in project.warnings)
 
 
 def test_env_file_paths_and_long_syntax(tmp_path, monkeypatch):

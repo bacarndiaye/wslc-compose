@@ -337,7 +337,7 @@ Show the wslc-compose and wslc versions.
 | Network `driver`, `driver_opts`, `labels`, `internal`, IPv4 IPAM `subnet` / `gateway` / `ip_range` | `network create --driver --opt --internal --subnet --gateway --ip-range` |
 | `depends_on` (list & map) | topological start/creation order; `condition: service_healthy` and `service_completed_successfully` are honored (see [Waiting for dependencies](#waiting-for-dependencies)) |
 | `healthcheck` (`test` as `CMD` / `CMD-SHELL` / `NONE`, `interval`, `timeout`, `start_period`, `retries`, `disable`; without `test` the options tune the image's own healthcheck) | `--health-cmd`, `--health-interval`, `--health-timeout`, `--health-start-period`, `--health-retries`, `--no-healthcheck` — the status shows in `ps` as `(healthy)` / `(unhealthy)` |
-| `deploy.replicas` (including `0`) | number of containers (see also `--scale`) |
+| `deploy.replicas` (including `0`), legacy service-level `scale` (must match `deploy.replicas` if both are set) | number of containers (see also `--scale`) |
 | `deploy.resources.limits.cpus` / `.memory`, `cpus`, `mem_limit` | `--cpus`, `-m` |
 | `deploy.resources.reservations.devices` (gpu), `gpus` | `--gpus` |
 | `shm_size`, `ulimits`, `stop_signal` | `--shm-size`, `--ulimit`, `--stop-signal` |
@@ -348,7 +348,7 @@ Show the wslc-compose and wslc versions.
 | `stdin_open`, `tty` | `-i`, `-t` |
 | `secrets` / `configs` (`file:` source; short & long service syntax) | read-only file mount at `/run/secrets/<name>` (secrets) or `/<name>` (configs), or `target` — see [Secrets and configs](#secrets-and-configs) |
 | `name` (top level) | default project name |
-| `restart: always` / `"no"` | `--restart always` — **needs wslc ≥ 3.0.5**; `unless-stopped` and `on-failure[:N]` are not supported by wslc (warned, ignored) |
+| `restart: always` / `"no"`; without `restart`, `deploy.restart_policy.condition` (`any` → `always`, `none` → `no`, `on-failure`) | `--restart always` — **needs wslc ≥ 3.0.5**; `unless-stopped` and `on-failure[:N]` are not supported by wslc (warned, ignored) |
 | `cap_add`, `cap_drop` | `--cap-add`, `--cap-drop` — **needs wslc ≥ 3.0.5**; may be blocked by the `AllowWSLContainerPrivileged` policy |
 | `include` (string, list, or `path:` mapping) | other compose files merged into the project; relative paths inside an included file resolve against *its* directory |
 | `extends` (`extends: name`, `{service: name}`, `{service: name, file: other.yaml}`) | the base service's settings, overlaid by the local ones with the same rules as multiple `-f` files |
@@ -358,7 +358,7 @@ Keys that wslc cannot honor yet are **accepted and reported as a warning** inste
 failing, so your existing files keep working: `privileged`, `devices`, `sysctls`, `init`,
 `pid`, `ipc`, `read_only`, `security_opt`, `logging`. Any other key that wslc-compose does
 not read (`platform`, `volumes_from`, `pull_policy`, `build.dockerfile_inline`,
-`deploy.restart_policy`, an unknown top-level section...) is also listed in a warning, so
+`deploy.placement`, an unknown top-level section...) is also listed in a warning, so
 nothing is dropped silently; `x-*` extension fields are never reported.
 
 Rejected with an explicit error (no silent surprise): `environment:`/`external:` secrets and

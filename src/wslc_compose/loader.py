@@ -63,7 +63,7 @@ _SERVICE_KEYS = frozenset(
      "hostname", "domainname", "dns", "dns_search", "dns_opt", "user", "working_dir", "labels",
      "stop_signal", "stop_grace_period", "shm_size", "stdin_open", "tty", "secrets", "configs",
      "healthcheck", "extra_hosts", "profiles", "restart", "cap_add", "cap_drop", "ulimits",
-     "mem_limit", "cpus", "deploy", "gpus"}
+     "mem_limit", "cpus", "deploy", "gpus", "scale"}
 ) | frozenset(UNSUPPORTED_KEYS)
 _BUILD_KEYS = frozenset({"context", "dockerfile", "args", "target", "pull", "no_cache"})
 
@@ -605,7 +605,10 @@ def _ignored_service_keys(cfg: dict) -> List[str]:
     if isinstance(deploy, dict):
         if deploy.get("mode") == "replicated":  # the default: nothing is lost
             deploy = {k: v for k, v in deploy.items() if k != "mode"}
-        ignored += _ignored_keys(deploy, {"replicas", "resources"}, "deploy.")
+        ignored += _ignored_keys(deploy, {"replicas", "resources", "restart_policy"}, "deploy.")
+        if "restart" not in cfg:  # otherwise `restart` wins and the whole policy is unused
+            ignored += _ignored_keys(deploy.get("restart_policy"), {"condition", "max_attempts"},
+                                     "deploy.restart_policy.")
         resources = deploy.get("resources")
         ignored += _ignored_keys(resources, {"limits", "reservations"}, "deploy.resources.")
         if isinstance(resources, dict):
@@ -614,6 +617,50 @@ def _ignored_service_keys(cfg: dict) -> List[str]:
             ignored += _ignored_keys(
                 resources.get("reservations"), {"devices"}, "deploy.resources.reservations.")
     return ignored
+
+
+def _replicas(svc_name: str, cfg: dict, deploy: dict) -> Optional[int]:
+    """`deploy.replicas`, or the legacy service-level `scale` (distinct values are an error)."""
+    found = {}
+    for key, value in (("deploy.replicas", deploy.get("replicas")), ("scale", cfg.get("scale"))):
+        if value is None:
+            continue
+        try:
+            found[key] = int(value)
+        except (TypeError, ValueError):
+            raise ComposeError(f"service {svc_name!r}: {key} must be a number") from None
+        if found[key] < 0:
+            raise ComposeError(f"service {svc_name!r}: {key} cannot be negative")
+    if len(set(found.values())) > 1:
+        raise ComposeError(
+            f"service {svc_name!r}: 'scale' and 'deploy.replicas' have distinct values")
+    return next(iter(found.values()), None)
+
+
+# deploy.restart_policy.condition -> the equivalent `restart:` value, as Docker Compose maps it.
+_RESTART_CONDITIONS = {"none": "no", "any": "always", "on-failure": "on-failure"}
+
+
+def _restart(svc_name: str, cfg: dict, deploy: dict) -> Optional[str]:
+    """`restart`, else `deploy.restart_policy` translated to a `restart` value."""
+    restart = cfg.get("restart")
+    if restart is not None:
+        return "no" if restart is False else str(restart)
+    policy = deploy.get("restart_policy")
+    if policy is None:
+        return None
+    if not isinstance(policy, dict):
+        raise ComposeError(f"service {svc_name!r}: deploy.restart_policy must be a mapping")
+    condition = str(policy.get("condition", "any"))  # the Compose default
+    if condition not in _RESTART_CONDITIONS:
+        raise ComposeError(
+            f"service {svc_name!r}: deploy.restart_policy.condition must be one of "
+            f"{', '.join(_RESTART_CONDITIONS)}, got {condition!r}"
+        )
+    restart = _RESTART_CONDITIONS[condition]
+    if restart == "on-failure" and policy.get("max_attempts") is not None:
+        restart += f":{policy['max_attempts']}"
+    return restart
 
 
 def _parse_build(value, project_dir: str) -> BuildConfig:
@@ -1237,8 +1284,8 @@ def load_project(
         if svc.extra_hosts:
             project.warnings.append(f"{svc_name}: extra_hosts is applied after start; the entrypoint may not observe it")
         svc.profiles = _as_list(cfg.get("profiles"))
-        restart = cfg.get("restart")
-        svc.restart = "no" if restart is False else (str(restart) if restart is not None else None)
+        deploy = cfg.get("deploy") or {}
+        svc.restart = _restart(svc_name, cfg, deploy)
         if svc.restart not in (None, "no", "always"):
             project.warnings.append(
                 f"{svc_name}: restart policy {svc.restart!r} is not supported by wslc "
@@ -1258,19 +1305,13 @@ def load_project(
         # resource limits: v2 style and deploy.resources.limits
         svc.mem_limit = cfg.get("mem_limit")
         svc.cpus = str(cfg["cpus"]) if cfg.get("cpus") is not None else None
-        deploy = cfg.get("deploy") or {}
         limits = ((deploy.get("resources") or {}).get("limits")) or {}
         svc.mem_limit = limits.get("memory", svc.mem_limit)
         if limits.get("cpus") is not None:
             svc.cpus = str(limits["cpus"])
-        if deploy.get("replicas") is not None:
-            try:
-                svc.replicas = int(deploy["replicas"])
-            except (TypeError, ValueError):
-                raise ComposeError(
-                    f"service {svc_name!r}: deploy.replicas must be a number") from None
-            if svc.replicas < 0:
-                raise ComposeError(f"service {svc_name!r}: deploy.replicas cannot be negative")
+        replicas = _replicas(svc_name, cfg, deploy)
+        if replicas is not None:
+            svc.replicas = replicas
         reservations = (deploy.get("resources") or {}).get("reservations") or {}
         for device in reservations.get("devices") or []:
             if "gpu" in (device.get("capabilities") or []):

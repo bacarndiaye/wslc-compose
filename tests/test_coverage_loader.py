@@ -174,6 +174,12 @@ def test_labels_list_form(tmp_path):
     ("deploy: {replicas: many}", "service 'a': deploy.replicas must be a number"),
     ("deploy: {replicas: [1]}", "service 'a': deploy.replicas must be a number"),
     ("deploy: {replicas: -1}", "service 'a': deploy.replicas cannot be negative"),
+    ("scale: many", "service 'a': scale must be a number"),
+    ("scale: -1", "service 'a': scale cannot be negative"),
+    ("scale: 2\n    deploy: {replicas: 3}", "service 'a': 'scale' and 'deploy.replicas' have distinct"),
+    ("deploy: {restart_policy: any}", "service 'a': deploy.restart_policy must be a mapping"),
+    ("deploy: {restart_policy: {condition: sometimes}}",
+     "service 'a': deploy.restart_policy.condition must be one of none, any, on-failure"),
     ("depends_on: b", "service 'a': depends_on: expected list or mapping"),
     ("depends_on: {b: yes}", "service 'a': depends_on.b: expected a mapping"),
 ])

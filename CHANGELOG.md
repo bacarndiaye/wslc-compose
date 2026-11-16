@@ -9,6 +9,11 @@
   affected containers.
 - Service keys (including `build.*` and `deploy.*`) and top-level sections that wslc-compose
   does not read are reported as a warning instead of being dropped silently (#61).
+- The legacy service-level `scale: N` sets the number of replicas like `deploy.replicas`;
+  distinct values in both are an error, as in Docker Compose (#62).
+- Without `restart:`, `deploy.restart_policy.condition` is applied (`any`, the default, →
+  `always`; `none` → `no`; `on-failure` is warned as unsupported by wslc) (#63). Such services
+  are recreated on the next `up` to get the policy.
 - `include:` accepts a service, network, volume, secret or config defined identically in
   the including and the included file; differing definitions are still a conflict (#58).
 
