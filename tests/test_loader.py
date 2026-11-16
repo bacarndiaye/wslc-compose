@@ -1089,6 +1089,36 @@ def test_scale(tmp_path, body, replicas):
     assert project.warnings == []
 
 
+@pytest.mark.parametrize("body, policy, warns", [
+    # issue #64
+    ("pull_policy: always", "always", False),
+    ("pull_policy: if_not_present", "missing", False),
+    ("pull_policy: daily", "missing", True),
+    ("pull_policy: every_12h", "missing", True),
+    ("pull_policy: build\n    build: .", "build", False),
+])
+def test_pull_policy(tmp_path, body, policy, warns):
+    project = _one(tmp_path, f"services:\n  a:\n    image: alpine\n    {body}\n")
+    assert project.services["a"].pull_policy == policy
+    assert any("pull_policy" in w for w in project.warnings) is warns
+
+
+@pytest.mark.parametrize("dotenv, environ, profiles", [
+    # issue #60: COMPOSE_PROFILES from the shell or .env (the shell wins)
+    ("", None, []),
+    ("COMPOSE_PROFILES=dev, debug,\n", None, ["dev", "debug"]),
+    ("COMPOSE_PROFILES=dev\n", "ops", ["ops"]),
+])
+def test_compose_profiles_env(tmp_path, monkeypatch, dotenv, environ, profiles):
+    if environ is None:
+        monkeypatch.delenv("COMPOSE_PROFILES", raising=False)
+    else:
+        monkeypatch.setenv("COMPOSE_PROFILES", environ)
+    (tmp_path / ".env").write_text(dotenv)
+    (tmp_path / "compose.yaml").write_text("services:\n  a:\n    image: alpine\n")
+    assert load_project(str(tmp_path / "compose.yaml")).profiles == profiles
+
+
 @pytest.mark.parametrize("body, restart, warns", [
     # issue #63: deploy.restart_policy is used when `restart` is absent
     ("deploy: {restart_policy: {condition: any}}", "always", False),

@@ -148,7 +148,7 @@ def _normalized_caps(values) -> List[str]:
 def _select_services(
     project: Project, names: List[str], profiles: List[str]
 ) -> List[Service]:
-    active = set(profiles or [])
+    active = set(profiles or project.profiles)
     for name in names:
         if name not in project.services:
             raise ComposeError(f"no such service: {name}")
@@ -357,13 +357,21 @@ def cmd_up(ns: argparse.Namespace) -> int:
             _info(f"Volume {vol.name} created")
 
     for svc in services:
-        # build when explicitly asked, or when the target image is absent
-        if svc.build and (ns.build or not engine.image_exists(flags.image_name(project, svc))):
-            _info(f"Building {svc.name} ...")
-            engine.run(
-                flags.build_args(project, svc, path_mapper=engine.to_host_path),
-                dry_run=ns.dry_run,
-            )
+        image = flags.image_name(project, svc)
+        # build when asked (--build, pull_policy: build) or when the target image is absent;
+        # pull_policy always pulls first, never refuses to start without a local image.
+        if svc.build and (ns.build or svc.pull_policy == "build"):
+            _build(project, svc, ns.dry_run)
+        elif svc.pull_policy == "always":
+            _info(f"Pulling {image} ...")
+            engine.run(["pull", image], dry_run=ns.dry_run)
+        elif (svc.build or svc.pull_policy == "never") and not engine.image_exists(image):
+            if not svc.build:
+                raise ComposeError(
+                    f"service {svc.name!r}: image {image!r} is not present locally and "
+                    "pull_policy is 'never'"
+                )
+            _build(project, svc, ns.dry_run)
 
     # Include exited containers so `up` can start an unchanged service instead
     # of colliding with its existing Compose name.
@@ -628,6 +636,11 @@ def cmd_exec(ns: argparse.Namespace) -> int:
     return proc.returncode
 
 
+def _build(project: Project, svc: Service, dry_run: bool) -> None:
+    _info(f"Building {svc.name} ...")
+    engine.run(flags.build_args(project, svc, path_mapper=engine.to_host_path), dry_run=dry_run)
+
+
 def _pull_for_command_reset(project: Project, svc: Service, dry_run: bool) -> None:
     """`command: []` restates the image's ENTRYPOINT, which is read from the local image."""
     if svc.command != [] or svc.entrypoint is not None or dry_run:
@@ -689,7 +702,9 @@ def _lifecycle(ns: argparse.Namespace, action: str) -> int:
 def cmd_pull(ns: argparse.Namespace) -> int:
     project = _load(ns)
     for svc in _select_services(project, ns.services, ns.profile):
-        if svc.image:
+        if svc.pull_policy in ("build", "never"):
+            _info(f"Skipping {svc.name}: pull_policy is {svc.pull_policy!r}")
+        elif svc.image:
             _info(f"Pulling {svc.image} ...")
             engine.run(["pull", svc.image], dry_run=ns.dry_run)
     return 0

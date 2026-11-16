@@ -147,6 +147,9 @@ class Service:
     healthcheck: Optional[HealthCheck] = None
     replicas: int = 1
     profiles: List[str] = field(default_factory=list)
+    # always / never / missing / build; None behaves as `missing`. Not part of the hashes:
+    # it only decides how `up` gets the image.
+    pull_policy: Optional[str] = None
     # `always` is applied with wslc >= 3.0.5 (`--restart`); other policies are not supported.
     restart: Optional[str] = None
     cap_add: List[str] = field(default_factory=list)  # applied with wslc >= 3.0.5
@@ -275,6 +278,8 @@ class Project:
     secrets: Dict[str, FileResource] = field(default_factory=dict)
     configs: Dict[str, FileResource] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
+    # COMPOSE_PROFILES (shell or .env); `--profile` replaces it.
+    profiles: List[str] = field(default_factory=list)
 
     def container_name(self, service: Service, index: int = 1) -> str:
         if service.container_name:
