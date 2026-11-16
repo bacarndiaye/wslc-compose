@@ -31,6 +31,13 @@ COMPOSE_FILENAMES = (
     "docker-compose.yml",
     "docker-compose.yaml",
 )
+# Overlaid on the auto-detected file when present next to it (not with -f / COMPOSE_FILE).
+OVERRIDE_FILENAMES = (
+    "compose.override.yml",
+    "compose.override.yaml",
+    "docker-compose.override.yml",
+    "docker-compose.override.yaml",
+)
 
 # compose keys we accept but wslc cannot enforce (yet)
 UNSUPPORTED_KEYS = {
@@ -45,6 +52,20 @@ UNSUPPORTED_KEYS = {
     "logging": "logging drivers are not configurable with wslc",
     "healthcheck_disable": "",
 }
+
+# Keys the loader reads; any other key (except `x-*` extensions) is reported as ignored.
+_TOP_LEVEL_KEYS = frozenset(
+    {"version", "name", "include", "services", "networks", "volumes", "secrets", "configs"}
+)
+_SERVICE_KEYS = frozenset(
+    {"image", "build", "command", "entrypoint", "container_name", "environment", "env_file",
+     "ports", "volumes", "tmpfs", "network_mode", "networks", "depends_on", "extends",
+     "hostname", "domainname", "dns", "dns_search", "dns_opt", "user", "working_dir", "labels",
+     "stop_signal", "stop_grace_period", "shm_size", "stdin_open", "tty", "secrets", "configs",
+     "healthcheck", "extra_hosts", "profiles", "restart", "cap_add", "cap_drop", "ulimits",
+     "mem_limit", "cpus", "deploy", "gpus"}
+) | frozenset(UNSUPPORTED_KEYS)
+_BUILD_KEYS = frozenset({"context", "dockerfile", "args", "target", "pull", "no_cache"})
 
 _WIN_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
@@ -177,8 +198,8 @@ def _scalar(value) -> str:
     return str(value)
 
 
-def find_compose_file(directory: str) -> Optional[str]:
-    for name in COMPOSE_FILENAMES:
+def find_compose_file(directory: str, names: Tuple[str, ...] = COMPOSE_FILENAMES) -> Optional[str]:
+    for name in names:
         path = os.path.join(directory, name)
         if os.path.isfile(path):
             return path
@@ -567,6 +588,32 @@ def _parse_env_files(value, project_dir: str, service: str) -> List[str]:
             continue
         paths.append(path)
     return paths
+
+
+def _ignored_keys(cfg, handled, prefix: str = "") -> List[str]:
+    """Keys of `cfg` outside `handled` (`x-*` extensions excepted), as `prefix + key`."""
+    if not isinstance(cfg, dict):
+        return []
+    return [f"{prefix}{key}" for key in cfg
+            if key not in handled and not str(key).startswith("x-")]
+
+
+def _ignored_service_keys(cfg: dict) -> List[str]:
+    ignored = _ignored_keys(cfg, _SERVICE_KEYS)
+    ignored += _ignored_keys(cfg.get("build"), _BUILD_KEYS, "build.")
+    deploy = cfg.get("deploy")
+    if isinstance(deploy, dict):
+        if deploy.get("mode") == "replicated":  # the default: nothing is lost
+            deploy = {k: v for k, v in deploy.items() if k != "mode"}
+        ignored += _ignored_keys(deploy, {"replicas", "resources"}, "deploy.")
+        resources = deploy.get("resources")
+        ignored += _ignored_keys(resources, {"limits", "reservations"}, "deploy.resources.")
+        if isinstance(resources, dict):
+            ignored += _ignored_keys(
+                resources.get("limits"), {"cpus", "memory"}, "deploy.resources.limits.")
+            ignored += _ignored_keys(
+                resources.get("reservations"), {"devices"}, "deploy.resources.reservations.")
+    return ignored
 
 
 def _parse_build(value, project_dir: str) -> BuildConfig:
@@ -1019,6 +1066,8 @@ def load_project(
         compose_files=compose_files,
         env_file=os.path.abspath(env_file) if env_file else None,
     )
+    for key in _ignored_keys(raw, _TOP_LEVEL_KEYS):
+        project.warnings.append(f"top-level '{key}' is not supported by wslc-compose (ignoring it)")
 
     # --- top level networks & volumes -------------------------------------
     raw_networks = raw.get("networks") or {}
@@ -1049,6 +1098,12 @@ def load_project(
         for key, message in UNSUPPORTED_KEYS.items():
             if key in cfg and message:
                 project.warnings.append(f"{svc_name}: {message} (ignoring '{key}')")
+        ignored = _ignored_service_keys(cfg)
+        if ignored:
+            project.warnings.append(
+                f"{svc_name}: not supported by wslc-compose (ignoring "
+                f"{', '.join(repr(key) for key in ignored)})"
+            )
 
         svc.image = cfg.get("image")
         if "build" in cfg:
