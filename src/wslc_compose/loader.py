@@ -66,7 +66,8 @@ _SERVICE_KEYS = frozenset(
      "mem_limit", "cpus", "deploy", "gpus", "scale", "pull_policy"}
 ) | frozenset(UNSUPPORTED_KEYS)
 _BUILD_KEYS = frozenset(
-    {"context", "dockerfile", "dockerfile_inline", "args", "labels", "target", "pull", "no_cache"}
+    {"context", "dockerfile", "dockerfile_inline", "args", "labels", "target", "pull", "no_cache",
+     "secrets"}
 )
 # A Git or URL build context (`https://...`, `git@host:repo`): wslc builds local directories only.
 _REMOTE_CONTEXT_RE = re.compile(r"^(?:[A-Za-z][A-Za-z0-9+.-]+://|git@)")
@@ -710,14 +711,36 @@ def _build_context(context, project_dir: str) -> str:
     return _resolve_bind_source(str(context), project_dir)
 
 
-def _parse_build(value, project_dir: str) -> BuildConfig:
+def _build_secrets(value, warnings: List[str]) -> Dict[str, str]:
+    """`build.secrets` as {secret id: top-level secret name} (`wslc build --secret`)."""
+    if value is None:
+        return {}
+    if not isinstance(value, list):
+        raise ComposeError("build.secrets: expected a list")
+    secrets: Dict[str, str] = {}
+    for item in value:
+        if isinstance(item, str):
+            source, secret_id = item, item
+        elif isinstance(item, dict) and item.get("source"):
+            source = str(item["source"])
+            secret_id = str(item.get("target") or source)
+            ignored = [k for k in ("uid", "gid", "mode") if k in item]
+            if ignored:
+                warnings.append(f"build secret {source!r}: {', '.join(ignored)} cannot be set "
+                                "by 'wslc build --secret' and will be ignored")
+        else:
+            raise ComposeError("build.secrets entries require a source")
+        if not secret_id or any(char in secret_id for char in ",="):
+            raise ComposeError(f"build.secrets: invalid secret id {secret_id!r}")
+        if secret_id in secrets:
+            raise ComposeError(f"build.secrets: secret id {secret_id!r} is used twice")
+        secrets[secret_id] = source
+    return secrets
+
+
+def _parse_build(value, project_dir: str, warnings: List[str]) -> BuildConfig:
     if isinstance(value, str):
         return BuildConfig(context=_build_context(value, project_dir))
-    if "secrets" in value:
-        raise ComposeError(
-            "build.secrets is not supported: 'wslc build' has no --secret option "
-            "(do not pass credentials as build args)"
-        )
     if value.get("dockerfile") and value.get("dockerfile_inline") is not None:
         raise ComposeError("build: 'dockerfile' and 'dockerfile_inline' are mutually exclusive")
     inline = value.get("dockerfile_inline")
@@ -727,6 +750,7 @@ def _parse_build(value, project_dir: str) -> BuildConfig:
         dockerfile_inline=None if inline is None else str(inline),
         args=_as_mapping(value.get("args"), "build.args"),
         labels=_as_mapping(value.get("labels"), "build.labels"),
+        secrets=_build_secrets(value.get("secrets"), warnings),
         target=value.get("target"),
         pull=_as_bool(value.get("pull", False), "build.pull"),
         no_cache=_as_bool(value.get("no_cache", False), "build.no_cache"),
@@ -1226,7 +1250,15 @@ def load_project(
 
         svc.image = cfg.get("image")
         if "build" in cfg:
-            svc.build = _parse_build(cfg["build"], project_dir)
+            build_warnings: List[str] = []
+            svc.build = _parse_build(cfg["build"], project_dir, build_warnings)
+            project.warnings.extend(f"{svc_name}: {w}" for w in build_warnings)
+            for source in svc.build.secrets.values():
+                if source not in project.secrets:
+                    raise ComposeError(
+                        f"service {svc_name!r} references undefined secret {source!r} in "
+                        "build.secrets"
+                    )
         if not svc.image and not svc.build:
             raise ComposeError(f"service {svc_name!r} needs 'image' or 'build'")
         svc.pull_policy = _pull_policy(

@@ -33,3 +33,13 @@ def test_invalid_version_is_rejected():
         assert "invalid version" in str(exc)
     else:
         raise AssertionError("expected SystemExit")
+
+
+def test_changelog_unreleased_section_becomes_the_release():
+    bump = _load()
+    text = "# Changelog\n\n## Unreleased\n\n### Fixed\n- x\n\n## 0.1.0 — 2026-01-01\n"
+    assert bump.changelog_with_heading(text, "0.2.0", "2026-02-02") == (
+        "# Changelog\n\n## 0.2.0 — 2026-02-02\n\n### Fixed\n- x\n\n## 0.1.0 — 2026-01-01\n")
+    # without an Unreleased section, an empty one is added to fill in
+    assert bump.changelog_with_heading("# Changelog\n\n## 0.1.0\n", "0.2.0", "2026-02-02") == (
+        "# Changelog\n\n## 0.2.0 — 2026-02-02\n\n### Added\n- \n\n## 0.1.0\n")

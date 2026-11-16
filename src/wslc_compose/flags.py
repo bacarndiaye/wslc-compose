@@ -258,6 +258,9 @@ def build_args(
         args += ["--build-arg", f"{key}={value}"]
     for key, value in build.labels.items():
         args += ["-l", f"{key}={value}"]
+    for secret_id, name in build.secrets.items():
+        source = mapper(project.secrets[name].file)
+        args += ["--secret", f"id={secret_id},type=file,src={source}"]
     if build.target:
         args += ["--target", build.target]
     if build.pull:

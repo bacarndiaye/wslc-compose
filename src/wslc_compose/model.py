@@ -52,6 +52,8 @@ class BuildConfig:
     no_cache: bool = False
     dockerfile_inline: Optional[str] = None
     labels: Dict[str, str] = field(default_factory=dict)
+    # secret id (as in `RUN --mount=type=secret,id=...`) -> top-level secret name
+    secrets: Dict[str, str] = field(default_factory=dict)
 
 
 @dataclass

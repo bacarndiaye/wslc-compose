@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- `build.secrets` (file-backed, short syntax or `source` / `target`) are passed to
+  `wslc build --secret id=<target>,type=file,src=<file>`, available since wslc 3.0.5; they
+  were rejected with an outdated "no --secret option" error.
+
+### Fixed
+- `scripts/bump_version.py` renames the `## Unreleased` section to the new version instead of
+  adding an empty section next to it.
+
 ## 0.7.0 — 2026-11-16
 
 The shared `config-hash` formula is unchanged. Only services whose effective settings change
